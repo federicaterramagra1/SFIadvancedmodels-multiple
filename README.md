@@ -33,7 +33,7 @@ Once your virtual environment is activated, install the required packages listed
 
 `pip install -r requirements.txt`
 
-## Usage
+# Usage
 To start a fault injection, compile the ```SETTINGS.py``` file to configure your experiments, then run:
 
 ``` python3 main.py ```
