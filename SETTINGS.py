@@ -25,15 +25,15 @@ DATASET available: 'CIFAR10', 'CIFAR100', 'GTSRB'
 FAULT_LIST_GENERATION = False
 
 # enable the fault injection
-FAULTS_INJECTION = True
+FAULTS_INJECTION = False
 
 # 0 : masked, 1: non.critic, 2: critic
-FI_ANALYSIS = True
+FI_ANALYSIS = False
 FI_ANALYSIS_SUMMARY = True
 
 # network and dataset to use
-DATASET_NAME = 'GTSRB'
-NETWORK_NAME = 'DenseNet121'
+DATASET_NAME = 'CIFAR10'
+NETWORK_NAME = 'ResNet20'
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = False
@@ -58,14 +58,11 @@ FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 
 #fault to inject in the model from the faul list
-FAULTS_TO_INJECT = 16650
-
-# disable the usage of CUDA ----- ?
-FORBID_CUDA = False
+FAULTS_TO_INJECT = 5
 
 # use the GPU is available
-USE_CUDA_0 = True
-USE_CUDA_1 = False
+USE_CUDA_0 = False
+USE_CUDA_1 = True
 
 # forbif the logging of the results ----- MI SEMBRA NON FUNZIONI
 NO_LOG_RESULTS = False
@@ -84,13 +81,7 @@ NETWORK = NETWORK_NAME
 
 # threshold under which an error is undetected
 THRESHOLD = 0.0
-
-# gaussian filter to the ofm to decrease fault impact  ----- ?
-GAUSSIAN_FILTER = False
-
-FORCE_RELOAD = False
-
-
+        
 # ------------------------------------ SAVE SETTINGS ------------------------------------
 
 # SAVE CLEAN OFM

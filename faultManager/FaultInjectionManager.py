@@ -16,12 +16,9 @@ from tqdm import tqdm
 
 from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-from smartLayers.utils import NoChangeOFMException
 
 from typing import List, Union
 
-from smartLayers.SmartModule import SmartModule
-from utils import get_module_by_name
 
 
 
@@ -30,7 +27,6 @@ class FaultInjectionManager:
     def __init__(self,
                  network: Module,
                  network_name: str,
-                 smart_modules_list: Union[List[SmartModule], None],
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
@@ -49,9 +45,6 @@ class FaultInjectionManager:
 
         # The folder where to save the output
         self.__faulty_output_folder = SETTINGS.FAULTY_OUTPUT_FOLDER
-
-        # The smart modules in the network
-        self.__smart_modules_list = smart_modules_list
 
         # The number of total inferences and the number of skipped inferences
         self.skipped_inferences = 0
@@ -271,13 +264,13 @@ class FaultInjectionManager:
             faulty_prediction_scores = network_output
             faulty_prediction_indices = [int(fault) for fault in faulty_prediction.indices]
 
-        except NoChangeOFMException:
-            # If the fault doesn't change the output feature map, then simply say that the fault doesn't worsen the
-            # network performances for this batch
+        except RuntimeError as e:
+            print(f'FaultInjectionManager: Skipped inference {self.total_inferences} in batch {batch_id}')
+            print(e)
+            self.skipped_inferences += 1
             faulty_prediction_scores = None
             faulty_prediction_indices = None
-            different_predictions = 0
-            self.skipped_inferences += 1
+            different_predictions = None
 
         self.total_inferences += 1
 

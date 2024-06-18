@@ -12,11 +12,10 @@ from torch.nn import Sequential, Module
 
 from torch.utils.data import DataLoader
 
-from faultManager.FaultListGenerator import FaultListGenerator
+from faultManager.FaultListManager import FaultListManager
 from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFault import WeightFault
 
-from smartLayers.SmartModulesManager import SmartModulesManager
 from torchvision.models import resnet
 from torchvision.models.densenet import _DenseBlock, _Transition
 from torchvision.models.efficientnet import Conv2dNormActivation
@@ -88,7 +87,7 @@ def get_network(network_name: str,
     if dataset_name == 'CIFAR10':
         print(f'Loading network {network_name} ...')   
         if 'ResNet20' in network_name:
-            network = SETTINGS.resnet_cifar10.resnet20() # FIXATO PER IL LABORATORIO
+            network = SETTINGS.resnet_cifar10.resnet20() 
         elif 'ResNet32' in network_name:
             network = SETTINGS.resnet_cifar10.resnet32()
         elif 'ResNet44' in network_name:
@@ -104,7 +103,7 @@ def get_network(network_name: str,
         elif 'Vgg13_bn' in network_name:
             network = SETTINGS.vgg_cifar10.vgg13_bn()
         elif 'MobileNetV2' in network_name:
-            network = SETTINGS.mobilenetv2_cifar10.MobileNetV2() # FIXATO PER IL LABORATORIO
+            network = SETTINGS.mobilenetv2_cifar10.MobileNetV2() 
             
             network_path = SETTINGS.MODEL_PT_PATH
             state_dict = torch.load(network_path, map_location=device)["net"]
@@ -273,7 +272,7 @@ def get_module_classes(network_name: str) -> Union[List[type], type]:
 
 
 def get_fault_list(fault_model: str,
-                   fault_list_generator: FaultListGenerator,
+                   fault_list_generator: FaultListManager,
                    e: float = .01,
                    t: float = 2.58) -> Tuple[Union[List[NeuronFault], List[WeightFault]], List[Module]]:
     """
@@ -297,7 +296,7 @@ def get_fault_list(fault_model: str,
     return fault_list, injectable_modules
 
 
-def get_device(forbid_cuda: bool,
+def get_device(
                use_cuda0: bool,
                use_cuda1: bool) -> torch.device:
     """
@@ -307,30 +306,22 @@ def get_device(forbid_cuda: bool,
     :return: The device where to perform the fault injection
     """
 
-    # Disable gpu if set
-    if forbid_cuda:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        device = 'cpu'
-        if use_cuda0 or use_cuda1:
-            print('WARNING: cuda forcibly disabled even if set_cuda is set')
-    # Otherwise, use the appropriate device
-    else:
-        if use_cuda0:
-            if torch.cuda.is_available():
-                device = 'cuda:0'
-            else:
-                device = ''
-                print('ERROR: cuda:0 not available even if use-cuda is set')
-                exit(-1)
-        elif use_cuda1:
-            if torch.cuda.is_available():
-                device = 'cuda:1'
-            else:
-                device = ''
-                print('ERROR: cuda:1 not available even if use-cuda is set')
-                exit(-1)
+    if use_cuda0:
+        if torch.cuda.is_available():
+            device = 'cuda:0'
         else:
-            device = 'cpu'
+            device = ''
+            print('ERROR: cuda:0 not available even if use-cuda is set')
+            exit(-1)
+    elif use_cuda1:
+        if torch.cuda.is_available():
+            device = 'cuda:1'
+        else:
+            device = ''
+            print('ERROR: cuda:1 not available even if use-cuda is set')
+            exit(-1)
+    else:
+        device = 'cpu'
 
     return torch.device(device)
 
@@ -411,138 +402,6 @@ def formatted_print(fault_list: list,
     complete_df.to_csv(f'{output_folder}/{file_prefix}fault_injection_batch_{batch_id}.csv', index=False)
 
 
-def enable_optimizations(
-        network: Module,
-        delayed_start_module: Union[Module, None],
-        module_classes: Union[List[type], type],
-        device: torch.device,
-        fm_folder: str,
-        fault_list_generator: FaultListGenerator,
-        fault_list: Union[List[NeuronFault], List[WeightFault]],
-        input_size: torch.Size = torch.Size((1, 3, 32, 32)),
-        injectable_modules: List[Module] = None,
-        fault_delayed_start: bool = True,
-        fault_dropping: bool = True):
-
-    # Replace the convolutional layers
-    if fault_dropping or fault_delayed_start:
-
-        smart_layers_manager = SmartModulesManager(network=network,
-                                                   delayed_start_module=delayed_start_module,
-                                                   device=device,
-                                                   input_size=input_size)
-
-        if fault_delayed_start:
-            # Replace the forward module of the target module to enable delayed start
-            smart_layers_manager.replace_module_forward()
-
-        # Replace the smart layers of the network
-        smart_modules_list = smart_layers_manager.replace_smart_modules(module_classes=module_classes,
-                                                                        fm_folder=fm_folder,
-                                                                        fault_list=fault_list)
-
-        # Update the network. Useful to update the list of injectable layers when injecting in the neurons
-        if injectable_modules is not None:
-            fault_list_generator.update_network(network)
-            injectable_modules = fault_list_generator.injectable_output_modules_list
-
-        network.eval()
-    else:
-        smart_modules_list = None
-
-    return injectable_modules, smart_modules_list
-
-
-
-
-def get_module_by_name(container_module: Module,
-                       module_name: str) -> Module:
-    """
-    Return the instance of the submodule module_name inside the container_module
-    :param container_module: The container module that contains the module_name module
-    :param module_name: The name of the module to find
-    :return: The instance of the submodule with the specified name
-    """
-
-    # To fine the actual layer with nested layers (e.g. inside a convolutional layer inside a Basic Block in a
-    # ResNet, first separate the layer names using the '.'
-    formatted_names = module_name.split(sep='.')
-
-    # Access the nested layer iteratively using itertools.reduce and getattr
-    module = reduce(getattr, formatted_names, container_module)
-
-    return module
-
-
-def load_ImageNet_validation_set(batch_size,
-                                 image_per_class=None,
-                                 network=None,
-                                 imagenet_folder='~/Datasets/ImageNet'):
-    """
-
-    :param batch_size:
-    :param image_per_class:
-    :param network: Default None. The network used to select the image per class. If not None, select the image_per_class
-    that maximize this network accuracy. If not specified, images are selected at random
-    :param imagenet_folder:
-    :return:
-    """
-
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    transform_validation = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        normalize,
-    ])
-
-    validation_dataset_folder = 'tmp'
-    validation_dataset_path = f'{validation_dataset_folder}/imagenet_{image_per_class}.pt'
-
-    try:
-        if image_per_class is None:
-            raise FileNotFoundError
-
-        validation_dataset = torch.load(validation_dataset_path)
-        print('Resized Imagenet loaded from disk')
-
-    except FileNotFoundError:
-        validation_dataset = ImageNet(root=imagenet_folder,
-                                      split='val',
-                                      transform=transform_validation)
-
-        if image_per_class is not None:
-            selected_validation_list = []
-            image_class_counter = [0] * 1000
-
-            # First select only correctly classified images
-            for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
-                if image_class_counter[validation_image[1]] < image_per_class:
-                    prediction = network(validation_image[0].cuda().unsqueeze(dim=0)).argmax() if network is not None else validation_image[1]
-                    if prediction == validation_image[1]:
-                        selected_validation_list.append(validation_image)
-                        image_class_counter[validation_image[1]] += 1
-
-            # Then select images to fill up
-            for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
-                if image_class_counter[validation_image[1]] < image_per_class:
-                    selected_validation_list.append(validation_image)
-                    image_class_counter[validation_image[1]] += 1
-            validation_dataset = selected_validation_list
-
-        os.makedirs(validation_dataset_folder, exist_ok=True)
-        torch.save(validation_dataset, validation_dataset_path)
-
-    # DataLoader is used to load the dataset
-    # for training
-    val_loader = torch.utils.data.DataLoader(dataset=validation_dataset,
-                                             batch_size=batch_size,
-                                             shuffle=False)
-    print('Dataset loaded')
-
-    return val_loader
 
 
 def load_MNIST_datasets(train_batch_size=32, test_batch_size=1):

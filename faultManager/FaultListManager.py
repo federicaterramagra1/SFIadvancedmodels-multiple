@@ -19,7 +19,7 @@ import SETTINGS
 import SETTINGS
 
 
-class FaultListGenerator:
+class FaultListManager:
 
     def __init__(self,
                  network: Module,

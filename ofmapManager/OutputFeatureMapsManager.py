@@ -176,24 +176,9 @@ class OutputFeatureMapsManager:
         """
         Load the clean output of the network. If the file is not found, compute the clean output (and the clean output
         feature maps)
-        :param force_reload: Whether to force the computation of the clean output
         """
-        
-        if force_reload:
-            
-            # Delete folders if they already exists
-            shutil.rmtree(self.__fm_folder, ignore_errors=True)
-            shutil.rmtree(self.__clean_output_folder, ignore_errors=True)
 
-            # Create the fm and clean output dir
-            os.makedirs(self.__fm_folder, exist_ok=True)
-            os.makedirs(self.__clean_output_folder, exist_ok=True)
-
-            # Save the intermediate layer
-            self.save_intermediate_layer_outputs()
-
-        
-        elif SETTINGS.SAVE_CLEAN_OFM == False:
+        if SETTINGS.SAVE_CLEAN_OFM == False:
             try:
                 self.clean_output = [torch.tensor(tensor.astype(np.float32), device=self.device)
                                     for tensor in np.load(self.__clean_output_path, allow_pickle=True)]

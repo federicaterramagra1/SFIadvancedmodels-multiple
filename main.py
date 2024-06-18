@@ -2,7 +2,7 @@ import copy
 import os
 import torch
 import SETTINGS
-from faultManager.FaultListGenerator import FaultListGenerator
+from faultManager.FaultListManager import FaultListManager
 from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition,  \
@@ -25,8 +25,7 @@ def main():
         torch.use_deterministic_algorithms(mode=True)
 
         # Select the device
-        device = get_device(forbid_cuda=SETTINGS.FORBID_CUDA,
-                            use_cuda0=SETTINGS.USE_CUDA_0,
+        device = get_device(use_cuda0=SETTINGS.USE_CUDA_0,
                             use_cuda1=SETTINGS.USE_CUDA_1)
         
         print(f'Using device {device}')
@@ -76,10 +75,10 @@ def main():
                                                     clean_output_folder=clean_output_folder)
 
         # Try to load the clean input
-        clean_ofm_manager.load_clean_output(SETTINGS.FORCE_RELOAD)
+        clean_ofm_manager.load_clean_output()
 
         # Generate fault list
-        fault_list_generator = FaultListGenerator(network=network,
+        fault_list_generator = FaultListManager(network=network,
                                                 network_name=SETTINGS.NETWORK,
                                                 device=device,
                                                 module_class=SETTINGS.MODULE_CLASSES_FAULT_LIST,
@@ -87,18 +86,17 @@ def main():
                                                 save_ifm=True)
 
         # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-        smart_network = copy.deepcopy(network)
-        fault_list_generator.update_network(smart_network)
+        # smart_network = copy.deepcopy(network)
+        # fault_list_generator.update_network(network)
 
         # Manage the fault models
         fault_list, injectable_modules = get_fault_list(fault_model=SETTINGS.FAULT_MODEL,
                                                         fault_list_generator=fault_list_generator)
 
         # Execute the fault injection campaign with the smart network
-        fault_injection_executor = FaultInjectionManager(network=smart_network,
+        fault_injection_executor = FaultInjectionManager(network=network,
                                                         network_name=SETTINGS.NETWORK,
                                                         device=device,
-                                                        smart_modules_list=None,
                                                         loader=loader,
                                                         clean_output=clean_ofm_manager.clean_output,
                                                         injectable_modules=injectable_modules)
