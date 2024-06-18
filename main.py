@@ -6,7 +6,7 @@ from faultManager.FaultListGenerator import FaultListGenerator
 from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition,  \
-                  get_fault_list, clean_inference, output_definition,  fault_list_gen
+                  get_fault_list, clean_inference, output_definition,  fault_list_gen, csv_summary
    
 
 
@@ -20,25 +20,31 @@ def main():
         
         print('Fault list generation is disabled')
     
-    if SETTINGS.FAULTS_INJECTION:
+    if SETTINGS.FAULTS_INJECTION or SETTINGS.ONLY_CLEAN_INFERENCE:
         # Set deterministic algorithms
         torch.use_deterministic_algorithms(mode=True)
 
         # Select the device
         device = get_device(forbid_cuda=SETTINGS.FORBID_CUDA,
-                            use_cuda=SETTINGS.USE_CUDA)
+                            use_cuda0=SETTINGS.USE_CUDA_0,
+                            use_cuda1=SETTINGS.USE_CUDA_1)
         
         print(f'Using device {device}')
          
         # Load the dataset
         _, loader = get_loader(network_name=SETTINGS.NETWORK,
                             batch_size=SETTINGS.BATCH_SIZE,
-                            dataset_name=SETTINGS.DATASET,)
+                            dataset_name=SETTINGS.DATASET)
         
         # Load the network
         network = get_network(network_name=SETTINGS.NETWORK,
                             device=device,
                             dataset_name=SETTINGS.DATASET)
+        
+        if SETTINGS.ONLY_CLEAN_INFERENCE:
+            print('clean inference accuracy test:')
+            clean_inference(network, loader, device, SETTINGS.NETWORK)
+            exit(-1)
         
         print('clean inference accuracy test:')
         clean_inference(network, loader, device, SETTINGS.NETWORK)
@@ -105,11 +111,19 @@ def main():
                                                             save_ofm=SETTINGS.SAVE_FAULTY_OFM,
                                                             ofm_folder=faulty_fm_folder)
         
-        if SETTINGS.FI_ANALYSIS:
-            
-            output_definition(SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE)
+        
     else:
         print('Fault injection is disabled')
+        
+    if SETTINGS.FI_ANALYSIS:
+            
+        output_definition(batch_size=SETTINGS.BATCH_SIZE)
+    else:
+        print('Fault injection analysis is disabled')
+    
+    if SETTINGS.FI_ANALYSIS_SUMMARY:
+        csv_summary()
+        
         
 
 

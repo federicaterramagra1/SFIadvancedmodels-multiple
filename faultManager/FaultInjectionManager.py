@@ -116,7 +116,7 @@ class FaultInjectionManager:
 
             # Order the fault list to speed up the injection
             # This is also important to avoid differences between a
-            fault_list = sorted(fault_list, key=lambda x: x.layer_name)
+            fault_list = sorted(fault_list, key=lambda x: x.injection)
 
             # Start measuring the time elapsed
             start_time = time.time()
@@ -144,7 +144,7 @@ class FaultInjectionManager:
                             desc=f'FI on b {batch_id}',
                             ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
-
+                    # fault._print()
                     # Change the description of the progress bar
                     # if fault_dropping and fault_delayed_start:
                     #     pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')

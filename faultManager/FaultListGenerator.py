@@ -253,7 +253,8 @@ class FaultListGenerator:
 
                 fault_list = list(reader)[1:]
 
-                fault_list = [WeightFault(layer_name=fault[1],
+                fault_list = [WeightFault(  injection = int(fault[0]),
+                                            layer_name=fault[1],
                                             tensor_index=make_tuple(fault[2]),
                                             bit=int(fault[-1])) for fault in fault_list]
 

@@ -2,6 +2,13 @@ output/
 log/
 Datasets/
 results/
+dlModels/CIFAR10/pretrained/*.pt
+dlModels/CIFAR10/pretrained/*.th
+dlModels/CIFAR100/pretrained/*.pth
+dlModels/GTSRB/pretrained/*.pt
+/output_summary
+/results_summary
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
