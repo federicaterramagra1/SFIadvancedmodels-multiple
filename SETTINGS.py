@@ -25,15 +25,15 @@ DATASET available: 'CIFAR10', 'CIFAR100', 'GTSRB'
 FAULT_LIST_GENERATION = False
 
 # enable the fault injection
-FAULTS_INJECTION = False
+FAULTS_INJECTION = True
 
 # 0 : masked, 1: non.critic, 2: critic
-FI_ANALYSIS = False
+FI_ANALYSIS = True
 FI_ANALYSIS_SUMMARY = True
 
 # network and dataset to use
-DATASET_NAME = 'CIFAR10'
-NETWORK_NAME = 'ResNet20'
+DATASET_NAME = 'CIFAR100'
+NETWORK_NAME = 'ResNet18'
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = False
@@ -58,7 +58,7 @@ FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 
 #fault to inject in the model from the faul list
-FAULTS_TO_INJECT = 5
+FAULTS_TO_INJECT = 16644
 
 # use the GPU is available
 USE_CUDA_0 = False

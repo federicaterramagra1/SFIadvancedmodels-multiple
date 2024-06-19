@@ -6,13 +6,12 @@
 ## Projects structure
 
 This project is structured as follows:
-
-- `main.py`: The main entry point for our application. It performs FI campaigns and save the OFM and the outputs (golden and faulty)
-- `SETTINGS.py`: Configuration file
+- `requirements.txt`: packages to install in a virtual environment to run the application
+- `main.py`: The main entry point for our application. It performs fault list generations, FI campaigns where it saves the OFM and the outputs (golden and faulty) and a final FI analysis
+- `SETTINGS.py`: Configuration file to set preferences
 - `utils.py`: Utility functions and helper modules
 - `faultManager/`: Contains the files used to manage the FI campaigns
 - `ofmapManager/`: Saves the OFM of the golden network
-- `smartlayers/`: Contains the file usefull to save the faulty OFM
 - `dlModels/`: Directory where models and weights are stored
 
 # Setup
@@ -46,6 +45,8 @@ The output of the SFI is stored in the folder `output`. More in details:
 - `output/faulty_feature_maps` : Stores the faulty feature maps
 - `output/faulty_ouput`: Stores the faulty output
 - `results/`: Stores the analysis of the outputs
+- `results_summary/`: Stores the summarized analysis of the outputs
+
 
 The file are named as follow:
 

@@ -6,7 +6,6 @@ dlModels/CIFAR100/pretrained/*.pth
 dlModels/GTSRB/pretrained/*.pt
 dlModels/CIFAR10/pretrained/*.pt
 dlModels/CIFAR10/pretrained/*.th
-/output_summary
 /results_summary
 
 # Byte-compiled / optimized / DLL files
@@ -16,7 +15,7 @@ __pycache__/
 
 # C extensions
 *.so
-
+    
 # Distribution / packaging
 .Python
 build/
