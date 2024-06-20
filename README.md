@@ -73,8 +73,7 @@ classes, `K` is the number of channels of an OFM, `H` is the height of an OFM an
 To load the FM arrays call ```np.load(file_name)['arr_0'])```. To load the output array call ```np.load(file_name, allow_pickle=True)```.
 
 ## Outputs
-
-The code is divided into four individually activatable parts, controlled by boolean variables in the SETTINGS.py file:
+The code is divided into four individually activatable parts that produce different outputs, controlled by boolean variables in the SETTINGS.py file:
 
 - ```FAULT_LIST_GENERATION```: Generates a fault list for the selected network based on the set parameters.
 - ```FAULTS_INJECTION```: Loads the fault list and executes the fault injection campaign, saving outputs or golden/corrupted OFMs based on the preferences set.
