@@ -33,9 +33,19 @@ Once your virtual environment is activated, install the required packages listed
 `pip install -r requirements.txt`
 
 # Usage
-To start a fault injection, compile the ```SETTINGS.py``` file to configure your experiments, then run:
+To generate the fault list, to start a fault injection, or to analyze the data, compile the ```SETTINGS.py``` file to configure your experiments, then run:
 
 ``` python3 main.py ```
+
+It is noted that the type of fault injected is permanent and simulates a stuck-at fault in the memory where the model weights are stored
+
+## Outputs
+The code is divided into four individually activatable parts that produce different outputs, controlled by boolean variables in the SETTINGS.py file:
+
+- ```FAULT_LIST_GENERATION```: Generates a fault list for the selected network based on the set parameters.
+- ```FAULTS_INJECTION```: Loads the fault list and executes the fault injection campaign, saving outputs or golden/corrupted OFMs based on the preferences set.
+- ```FI_ANALYSIS```: Analyzes the corrupted outputs against the golden ones and returns the number of masked, non-critical, and critical (SDC-1) inferences.
+- ```FI_ANALYSIS_SUMMARY```: When injecting a large number of faults or using large datasets, the previous analysis can produce very large and hard-to-handle CSV files. This variable activates a script that summarizes the previously generated data to make it more accessible.
 
 The output of the SFI is stored in the folder `output`. More in details:
 
@@ -72,10 +82,17 @@ classes, `K` is the number of channels of an OFM, `H` is the height of an OFM an
 
 To load the FM arrays call ```np.load(file_name)['arr_0'])```. To load the output array call ```np.load(file_name, allow_pickle=True)```.
 
-## Outputs
-The code is divided into four individually activatable parts that produce different outputs, controlled by boolean variables in the SETTINGS.py file:
+### Fault list
 
-- ```FAULT_LIST_GENERATION```: Generates a fault list for the selected network based on the set parameters.
-- ```FAULTS_INJECTION```: Loads the fault list and executes the fault injection campaign, saving outputs or golden/corrupted OFMs based on the preferences set.
-- ```FI_ANALYSIS```: Analyzes the corrupted outputs against the golden ones and returns the number of masked, non-critical, and critical (SDC-1) inferences.
-- ```FI_ANALYSIS_SUMMARY```: When injecting a large number of faults or using large datasets, the previous analysis can produce very large and hard-to-handle CSV files. This variable activates a script that summarizes the previously generated data to make it more accessible.
+Le fault list generate sono dei CSV con uno specifico formato a cui il FI fa riferimento per iniettare il fault all'interno del modello neurale. la struttra è la seguente::
+
+
+FL example for a VGG-11 model with GTSRB dataset
++-----------+------------+----------------+-----+
+| Injection |    Layer   |   TensorIndex  | Bit |
++-----------+------------+----------------+-----+
+|         0 | features.0 | "(3, 0, 2, 1)" |  15 |
++-----------+------------+----------------+-----+
+|    ...    |     ...    |       ...      | ... |
++-----------+------------+----------------+-----+
+
