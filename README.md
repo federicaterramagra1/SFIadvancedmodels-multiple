@@ -44,7 +44,7 @@ The code is divided into four individually activatable parts that produce differ
 
 - ```FAULT_LIST_GENERATION```: Generates a fault list for the selected network based on the set parameters.
 - ```FAULTS_INJECTION```: Loads the fault list and executes the fault injection campaign, saving outputs or golden/corrupted OFMs based on the preferences set.
-- ```FI_ANALYSIS```: Analyzes the corrupted outputs against the golden ones and returns the number of masked, non-critical, and critical (SDC-1) inferences.
+- ```FI_ANALYSIS```: Analyzes the corrupted outputs against the golden ones and returns the number of masked, non-critical, and critical (SDC-1) fault.
 - ```FI_ANALYSIS_SUMMARY```: When injecting a large number of faults or using large datasets, the previous analysis can produce very large and hard-to-handle CSV files. This variable activates a script that summarizes the previously generated data to make it more accessible.
 
 The output of the SFI is stored in the folder `output`. More in details:
@@ -118,3 +118,8 @@ Inside, there are two files:
 |     0 |     0 |     3 |      2 |
 |  ...  |  ...  |  ...  |   ...  |
 | 16663 |     9 |  1024 |      1 |
+
+- `fault`: Unique identifier of the injected fault, corresponding to the Injection column in the fault list used.
+- `batch`: Batch containing the dataset images used for inference.
+- `image`: Image in the batch on which the inference was performed.
+- `output`: Classification of the injected fault by comparing the golden outputs with the corrupted ones obtained from the image inference. The returned values are `0` for a masked fault, `1` for a non-critical fault, and `2` for a critical fault (SDC-1).
