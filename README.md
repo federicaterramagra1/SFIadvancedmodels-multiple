@@ -119,7 +119,7 @@ Inside, there are two files:
 |  ...  |  ...  |  ...  |   ...  |
 | 16663 |     9 |  1024 |      1 |
 
-- `fault`: Unique identifier of the injected fault, corresponding to the Injection column in the fault list used.
+- `fault`: Unique identifier of the injected fault, corresponding to the `Injection` column in the fault list used.
 - `batch`: Batch containing the dataset images used for inference.
 - `image`: Image in the batch on which the inference was performed.
 - `output`: Classification of the injected fault by comparing the golden outputs with the corrupted ones obtained from the image inference. The returned values are `0` for a masked fault, `1` for a non-critical fault, and `2` for a critical fault (SDC-1).
