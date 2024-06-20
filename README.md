@@ -84,7 +84,7 @@ To load the FM arrays call ```np.load(file_name)['arr_0'])```. To load the outpu
 
 ### Fault list
 
-Le fault list generate sono dei CSV con uno specifico formato a cui il FI fa riferimento per iniettare il fault all'interno del modello neurale. la struttra è la seguente::
+The generated fault lists are CSV files with a specific format to which the FI refers in order to inject faults into the neural model. The structure is as follows:
 
 
 FL example for a VGG-11 model with GTSRB dataset
@@ -99,3 +99,21 @@ FL example for a VGG-11 model with GTSRB dataset
 - `TensorIndex`: coordinate of the weight where the fault is injected.
 - `Bit`: corrupted bit that is flipped.
 
+
+### Analysis
+
+I file di analisi contenuti nella cartella `results/` sono suddivisi a seconda del dataset, del modello e della batch size: `resutls/dataset-name/model-name/batch-size/`
+All'interno sono presenti 2 file:
+- `fault_statistics.txt`: file di testo in cui sono salvati il numero totale di inferenze mascherate, non-critiche e critiche(SDC-1)
+- `output_analysis.csv`: CSV in cui sono presenti tutte le informazioni riguardo la classificazione di ogni fault per ogni inferenza.
+
+`output_analysis.csv` è organizzato nel seguente modo:
+
+| fault | batch | image | output |
+|:-----:|:-----:|:-----:|:------:|
+|     0 |     0 |     0 |      1 |
+|     0 |     0 |     1 |      0 |
+|     0 |     0 |     2 |      0 |
+|     0 |     0 |     3 |      2 |
+|  ...  |  ...  |  ...  |   ...  |
+| 16663 |     9 |  1024 |      1 |
