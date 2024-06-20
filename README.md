@@ -126,8 +126,7 @@ a
 
 ### Summarized analysis
 
-A causa della verbosità del CSV `output_analysis.csv`, se si iniettano molti fault o le immagini usate per eseguire le inferenze sono numerose, la leggibilità del CSV cala drasticamente. Per risolvere questo problema, attraverso l'opzione `FI_ANALYSIS_SUMMARY`, è possibile generare un nuovo file CSV denominato `model-name_summary.csv` dentro la cartella `results_summary/dataset-name/model-name/batch-size/`. Il CSV è organizzato nel seguente modo:
-
+Due to the verbosity of the `output_analysis.csv` file, if many faults are injected or a large number of images are used for inferences, the readability of the CSV decreases significantly. To address this issue, using the `FI_ANALYSIS_SUMMARY` option, you can generate a new CSV file named `model-name_summary.csv` inside the `results_summary/dataset-name/model-name/batch-size/` folder. The CSV is organized as follows:
 
 | Injection | Layer |   TensorIndex   | Bit | n_injections | masked | non_critical | critical |
 |:---------:|:-----:|:---------------:|:---:|:------------:|:------:|:------------:|:--------:|
