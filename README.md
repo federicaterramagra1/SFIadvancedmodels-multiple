@@ -102,12 +102,13 @@ FL example for a VGG-11 model with GTSRB dataset
 
 ### Analysis
 
-I file di analisi contenuti nella cartella `results/` sono suddivisi a seconda del dataset, del modello e della batch size: `resutls/dataset-name/model-name/batch-size/`
-All'interno sono presenti 2 file:
-- `fault_statistics.txt`: file di testo in cui sono salvati il numero totale di inferenze mascherate, non-critiche e critiche(SDC-1)
-- `output_analysis.csv`: CSV in cui sono presenti tutte le informazioni riguardo la classificazione di ogni fault per ogni inferenza.
+The analysis files contained in the `results/` folder are organized by dataset, model, and batch size: `results/dataset-name/model-name/batch-size/`. 
+Inside, there are two files:
 
-`output_analysis.csv` è organizzato nel seguente modo:
+- `fault_statistics.txt`: A text file where the total number of masked, non-critical, and critical (SDC-1) inferences are saved.
+- `output_analysis.csv`:  A CSV file containing all the information regarding the classification of each fault for every inference.
+
+`output_analysis.csv` is organized as follows:
 
 | fault | batch | image | output |
 |:-----:|:-----:|:-----:|:------:|
