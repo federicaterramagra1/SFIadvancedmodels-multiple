@@ -72,3 +72,11 @@ classes, `K` is the number of channels of an OFM, `H` is the height of an OFM an
 
 To load the FM arrays call ```np.load(file_name)['arr_0'])```. To load the output array call ```np.load(file_name, allow_pickle=True)```.
 
+## Outputs
+
+The code is divided into four individually activatable parts, controlled by boolean variables in the SETTINGS.py file:
+
+```FAULT_LIST_GENERATION```: Generates a fault list for the selected network based on the set parameters.
+```FAULTS_INJECTION```: Loads the fault list and executes the fault injection campaign, saving outputs or golden/corrupted OFMs based on the preferences set.
+```FI_ANALYSIS```: Analyzes the corrupted outputs against the golden ones and returns the number of masked, non-critical, and critical (SDC-1) inferences.
+```FI_ANALYSIS_SUMMARY```: When injecting a large number of faults or using large datasets, the previous analysis can produce very large and hard-to-handle CSV files. This variable activates a script that summarizes the previously generated data to make it more accessible.
