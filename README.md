@@ -94,3 +94,8 @@ FL example for a VGG-11 model with GTSRB dataset
 |         0 | features.0 | "(3, 0, 2, 1)" |  15 |
 |    ...    |     ...    |       ...      | ... |
 
+- `Injection`: column indicating the injection number.
+- `Layer`: the layer in which the fault is injected.
+- `TensorIndex`: coordinate of the weight where the fault is injected.
+- `Bit`: corrupted bit that is flipped.
+
