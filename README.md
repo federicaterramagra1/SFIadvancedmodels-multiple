@@ -102,7 +102,7 @@ FL example for a VGG-11 model with GTSRB dataset
 
 ### Analysis
 
-The analysis files contained in the `results/` folder are organized by dataset, model, and batch size: `results/dataset-name/model-name/batch-size/`. 
+The analysis files obtained with `FI_ANALYSIS` option are contained in the `results/` folder and are organized by dataset, model, and batch size: `results/dataset-name/model-name/batch-size/`. 
 Inside, there are two files:
 
 - `fault_statistics.txt`: A text file where the total number of masked, non-critical, and critical (SDC-1) inferences are saved.
@@ -118,8 +118,20 @@ Inside, there are two files:
 |     0 |     0 |     3 |      2 |
 |  ...  |  ...  |  ...  |   ...  |
 | 16663 |     9 |  1024 |      1 |
-
+a
 - `fault`: Unique identifier of the injected fault, corresponding to the `Injection` column in the fault list used.
 - `batch`: Batch containing the dataset images used for inference.
 - `image`: Image in the batch on which the inference was performed.
 - `output`: Classification of the injected fault by comparing the golden outputs with the corrupted ones obtained from the image inference. The returned values are `0` for a masked fault, `1` for a non-critical fault, and `2` for a critical fault (SDC-1).
+
+### Summarized analysis
+
+A causa della verbosità del CSV `output_analysis.csv`, se si iniettano molti fault o le immagini usate per eseguire le inferenze sono numerose, la leggibilità del CSV cala drasticamente. Per risolvere questo problema, attraverso l'opzione `FI_ANALYSIS_SUMMARY`, è possibile generare un nuovo file CSV denominato `model-name_summary.csv` dentro la cartella `results_summary/dataset-name/model-name/batch-size/`. Il CSV è organizzato nel seguente modo:
+
+
+| Injection | Layer |   TensorIndex   | Bit | n_injections | masked | non_critical | critical |
+|:---------:|:-----:|:---------------:|:---:|:------------:|:------:|:------------:|:--------:|
+|         0 | conv1 |  "(7, 0, 2, 1)" |  15 |        10000 |  10000 |            0 |        0 |
+|         1 | conv1 | "(14, 0, 2, 0)" |   5 |        10000 |  10000 |            0 |        0 |
+|         2 | conv1 | "(27, 0, 0, 0)" |  13 |        10000 |    701 |         9298 |        1 |
+|         3 | conv1 | "(14, 2, 2, 0)" |  12 |        10000 |   9998 |            2 |        0 |
