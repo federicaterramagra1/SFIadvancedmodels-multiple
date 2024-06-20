@@ -88,11 +88,9 @@ Le fault list generate sono dei CSV con uno specifico formato a cui il FI fa rif
 
 
 FL example for a VGG-11 model with GTSRB dataset
-+-----------+------------+----------------+-----+
+
 | Injection |    Layer   |   TensorIndex  | Bit |
-+-----------+------------+----------------+-----+
+|:---------:|:----------:|:--------------:|:---:|
 |         0 | features.0 | "(3, 0, 2, 1)" |  15 |
-+-----------+------------+----------------+-----+
 |    ...    |     ...    |       ...      | ... |
-+-----------+------------+----------------+-----+
 
