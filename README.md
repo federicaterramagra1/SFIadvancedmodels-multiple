@@ -94,10 +94,10 @@ FL example for a VGG-11 model with GTSRB dataset
 |         0 | features.0 | "(3, 0, 2, 1)" |  15 |
 |    ...    |     ...    |       ...      | ... |
 
-- `Injection`: column indicating the injection number.
-- `Layer`: the layer in which the fault is injected.
-- `TensorIndex`: coordinate of the weight where the fault is injected.
-- `Bit`: corrupted bit that is flipped.
+- `Injection`: Column indicating the injection number.
+- `Layer`: The layer in which the fault is injected.
+- `TensorIndex`: Coordinate of the weight where the fault is injected.
+- `Bit`: Corrupted bit that is flipped.
 
 
 ### Analysis
@@ -108,7 +108,14 @@ Inside, there are two files:
 - `fault_statistics.txt`: A text file where the total number of masked, non-critical, and critical (SDC-1) inferences are saved.
 - `output_analysis.csv`:  A CSV file containing all the information regarding the classification of each fault for every inference.
 
-`output_analysis.csv` is organized as follows:
+Faults were classified according to 3 typologies:
+- `masked`: Inference that mask the fault.
+- `non-critical`: Inferences where the fault alters the output but not the prediction.
+- `critical (SDC-1)`: Inference where the fault is classified as SDC-1, meaning it alters the final prediction.
+
+
+
+The `output_analysis.csv` is organized as follows:
 
 | fault | batch | image | output |
 |:-----:|:-----:|:-----:|:------:|
@@ -126,7 +133,7 @@ a
 
 ### Summarized analysis
 
-Due to the verbosity of the `output_analysis.csv` file, if many faults are injected or a large number of images are used for inferences, the readability of the CSV decreases significantly. To address this issue, using the `FI_ANALYSIS_SUMMARY` option, you can generate a new CSV file named `model-name_summary.csv` inside the `results_summary/dataset-name/model-name/batch-size/` folder. The CSV is organized as follows:
+Due to the verbosity of the `output_analysis.csv` file, if many faults are injected or a large number of images are used for inferences, the readability of the CSV decreases significantly. To address this issue, using the `FI_ANALYSIS_SUMMARY` option, you can generate a new CSV file named `model-name_summary.csv` inside the `results_summary/dataset-name/model-name/batch-size/` folder. This file comprises the original fault list integrated with summarized results for each fault obtained from the previous analysis. The CSV is organized as follows:
 
 | Injection | Layer |   TensorIndex   | Bit | n_injections | masked | non_critical | critical |
 |:---------:|:-----:|:---------------:|:---:|:------------:|:------:|:------------:|:--------:|
@@ -134,3 +141,13 @@ Due to the verbosity of the `output_analysis.csv` file, if many faults are injec
 |         1 | conv1 | "(14, 0, 2, 0)" |   5 |        10000 |  10000 |            0 |        0 |
 |         2 | conv1 | "(27, 0, 0, 0)" |  13 |        10000 |    701 |         9298 |        1 |
 |         3 | conv1 | "(14, 2, 2, 0)" |  12 |        10000 |   9998 |            2 |        0 |
+|    ...    |  ...  |       ...       | ... |      ...     |   ...  |      ...     |    ...   |
+
+- `Injection`: Column indicating the injection number.
+- `Layer`: The layer in which the fault is injected.
+- `TensorIndex`: Coordinate of the weight where the fault is injected.
+- `Bit`: Corrupted bit that is flipped.
+- `n_injections`:  Number of summarized inferences, representing the entire test dataset executed with the injected fault.
+- `masked`: Number of dataset inferences that identified the fault as masked.
+- `non_critical`: Number of dataset inferences that identified the fault as non-critical.
+- `critical`: Number of dataset inferences that identified the fault as critical (SDC-1).
