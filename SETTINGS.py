@@ -25,15 +25,15 @@ DATASET available: 'CIFAR10', 'CIFAR100', 'GTSRB'
 FAULT_LIST_GENERATION = False
 
 # enable the fault injection
-FAULTS_INJECTION = True
+FAULTS_INJECTION = False
 
 # 0 : masked, 1: non.critic, 2: critic
-FI_ANALYSIS = True
+FI_ANALYSIS = False
 FI_ANALYSIS_SUMMARY = True
 
 # network and dataset to use
-DATASET_NAME = 'CIFAR100'
-NETWORK_NAME = 'ResNet18'
+DATASET_NAME = 'CIFAR10'
+NETWORK_NAME = 'ResNet20'
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = False
@@ -42,7 +42,7 @@ ONLY_CLEAN_INFERENCE = False
 
 
 # FAULT LIST
-SEED = 40
+SEED = 38
 
 # FAULT LIST PARAMETERS
 error_margin = 0.01
@@ -58,17 +58,17 @@ FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 
 #fault to inject in the model from the faul list
-FAULTS_TO_INJECT = 16644
+FAULTS_TO_INJECT = 20
 
 # use the GPU is available
-USE_CUDA_0 = False
-USE_CUDA_1 = True
+USE_CUDA_0 = True
+USE_CUDA_1 = False
 
 # forbif the logging of the results ----- MI SEMBRA NON FUNZIONI
 NO_LOG_RESULTS = False
 
 # test set batch size
-BATCH_SIZE = 1024
+BATCH_SIZE = 254
 
 # fault model to use (check the top of the file for the available models)
 FAULT_MODEL = 'stuck-at_params'
@@ -81,14 +81,22 @@ NETWORK = NETWORK_NAME
 
 # threshold under which an error is undetected
 THRESHOLD = 0.0
+
+# ------------------------------------ FAULT ANALYSIS SETTINGS ------------------------------------# 
+
+# Batch from which to start and end the analysis to segment the analysis due to memory problems (in the case you have troubles with the memory)
+RAM_LIMIT = False
+BATCH_START = 0
+BATCH_END = 13
+
         
 # ------------------------------------ SAVE SETTINGS ------------------------------------
 
 # SAVE CLEAN OFM
-SAVE_CLEAN_OFM = False
+SAVE_CLEAN_OFM = True
 
 # SAVE FAULTY OFM
-SAVE_FAULTY_OFM = False
+SAVE_FAULTY_OFM = True
 
 # SAVE FAULTY OUTPUT
 SAVE_FAULTY_OUTPUT = True

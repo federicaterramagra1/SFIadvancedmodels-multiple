@@ -12,7 +12,7 @@ from torch.nn import Sequential, Module
 
 from torch.utils.data import DataLoader
 
-from faultManager.FaultListManager import FaultListManager
+from faultManager.FaultListManager import FLManager
 from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFault import WeightFault
 
@@ -272,7 +272,7 @@ def get_module_classes(network_name: str) -> Union[List[type], type]:
 
 
 def get_fault_list(fault_model: str,
-                   fault_list_generator: FaultListManager,
+                   fault_list_generator: FLManager,
                    e: float = .01,
                    t: float = 2.58) -> Tuple[Union[List[NeuronFault], List[WeightFault]], List[Module]]:
     """
@@ -587,52 +587,47 @@ def load_from_dict(network, device, path, function=None):
     print('state_dict loaded into network')
     
     
-def output_definition(batch_size):
+def output_definition(test_loader, batch_size):
     
-    # _, loader = get_loader(network_name=SETTINGS.NETWORK,
-    #                         batch_size=SETTINGS.BATCH_SIZE,
-    #                         dataset_name=SETTINGS.DATASET,)
-        
-    
-    # pbar = tqdm(loader,
-    #         colour='green',
-    #         desc=f'Saving test labels from {SETTINGS.DATASET_PATH} {network_name} {batch_size}',
-    #         ncols=shutil.get_terminal_size().columns)
-
-    # dataset_size = 0
-
-    # # Initialize an empty list to store batch information
-    # batch_info_list = []
-
-    # for batch_id, batch in enumerate(pbar):
-    #     _, label = batch
-        
-    #     # Assuming label is a tensor, convert it to a numpy array
-    #     label_np = label.numpy()
-
-    #     # Initialize an empty list to store information for each image in the batch
-    #     batch_info = []
-
-    #     for j in range(len(label_np)):
-    #         image_info = [batch_id, j, label_np[j].item()]
-    #         batch_info.append(image_info)
-
-    #     # Append batch_info to the batch_info_list
-    #     batch_info_list.extend(batch_info)
-
-    #     dataset_size += len(label_np)
-
-    # # Convert batch_info_list to a NumPy array
-    # batch_info_array = np.array(batch_info_list) 
-
     masked = 0
     critical = 0
     not_critical = 0
+    dataset_size = 0    
     output_results_list = []
+    batch_info_list = []
+
+    pbar = tqdm(test_loader,
+            colour='green',
+            desc=f'Saving test labels from {SETTINGS.DATASET_NAME} {SETTINGS.NETWORK_NAME} {batch_size}',
+            ncols=shutil.get_terminal_size().columns)
+    
+    for batch_id, batch in enumerate(pbar):
+        _, label = batch
+        
+        # Assuming label is a tensor, convert it to a numpy array
+        label_np = label.numpy()
+
+        # Initialize an empty list to store information for each image in the batch
+        batch_info = []
+
+        for j in range(len(label_np)):
+            image_info = [batch_id, j, label_np[j].item()]
+            batch_info.append(image_info)
+
+        # Append batch_info to the batch_info_list
+        batch_info_list.extend(batch_info)
+
+        dataset_size += len(label_np)
+
+    batch_info_array = np.array(batch_info_list) 
+    
+    del test_loader
+    del batch_info_list
 
     # Load clean tensor
     clean_output_path =SETTINGS.CLEAN_OUTPUT_FOLDER + '/clean_output.npy'
 
+    print('loading clean outputs...')
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
 
     # print(loaded_clean_output.shape)
@@ -656,117 +651,61 @@ def output_definition(batch_size):
     # Define the shape of the tensor
     dim1 = n_faults 
     dim2 = number_of_batch 
+    start_batch = 0
+    # ram limit
+    if SETTINGS.RAM_LIMIT:
+        start_batch = SETTINGS.BATCH_START
+        dim2 = SETTINGS.BATCH_END
     dim3 = int(batch_size) 
-    dim4 = n_outputs 
-
-
-    # result_tensor = np.zeros((dim1, dim2, dim3, dim4), dtype=np.float32)
-    # print(result_tensor.shape)
 
     # batch_data_list = []
     faulty_tensor_data = np.zeros((n_faults, number_of_batch, dim3, n_outputs), dtype=np.float32)
-
+    
     print('loading faulty outputs')
-    for i in tqdm(range(number_of_batch)):
+    for i in tqdm(range(start_batch,dim2)):
         
         file_name = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}' + f'/batch_{i}.npy'
+        print(f'loading: batch_{i}.npy')
         loaded_faulty_output = np.load(file_name)
         # batch_data_list.append(loaded_faulty_output)
         faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :] = loaded_faulty_output
+        del loaded_faulty_output
 
     print('shape of faulty tensor:', faulty_tensor_data.shape)
-    # Find the maximum number of images across all batches
-
-    # max_images = max(data.shape[1] for data in batch_data_list)
-
-    # Update dim3 with the maximum number of images
-
-
-    # Initialize the result tensor with the correct dimensions
-
-    # Populate the result tensor with the loaded data
-    # for i, data in enumerate(batch_data_list):
-    #     faulty_tensor_data[:, i, :data.shape[1], :] = data
 
     print('faulty outputs loaded')
-    # print(result_tensor.shape)   
-    
- 
-    # faulty_tensor_data = result_tensor
-    
+
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
     
+    clean_output_match_counter = 0
+    faulty_output_match_counter = 0
+
     # open the .csv
-    with open(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv', mode='w') as file_csv:
+    with open(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv', mode='a') as file_csv:
 
         csv_writer = csv.writer(file_csv)
-        csv_writer.writerow(['fault', 'batch', 'image', 'output', ])
+        if SETTINGS.BATCH_START == 0:
+            csv_writer.writerow(['fault', 'batch', 'image', 'output'])
 
         print(f'faults: {n_faults}, batches: {number_of_batch}')
 
         #inside faults
         for z in tqdm(range(dim1), desc="output definition progress"):
             #inside batches
-            for i in range(dim2):
-                # print(dim3)
-                # print(loaded_clean_output[i].shape[0])
+            for i in range(start_batch, dim2):
                 # inside images
                 for j in range(min(dim3, loaded_clean_output[i].shape[0])):
                     clean_output_argmax = np.argmax(loaded_clean_output[i][j, :])
-                    faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])     
-                    
-                #     clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
-                
-                #     clean_output_match = (clean_output_argmax == clean_output_label)
-                
-                #     faulty_output_match = (faulty_output_argmax == clean_output_label)
-                    
-                #     faulty_sdc_1 = 'Y'
-                #     clean_sdc_1 = 'Y'
-                #     # Increment counters based on matches
-                #     if clean_output_match:
-                #         clean_output_match_counter += 1
-                #         clean_sdc_1 = 'N'
+                    faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])    
 
-                #     if faulty_output_match:
-                #         faulty_output_match_counter += 1
-                #         faulty_sdc_1 = 'N'
+                    clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
+                    faulty_output_match = (faulty_output_argmax == clean_output_label)
+                  
                     
-                #     top5_indices_clean = np.argsort(loaded_clean_output[i][j, :])[::-1][:5]
-                #     top5_indices_faulty = np.argsort(faulty_tensor_data[z, i, j, :])[::-1][:5]
-                #     # Increment counters based on top-5 matches
-                #     if clean_output_label in top5_indices_clean:
-                #         clean_output_match_top5 = True
-                #     else:
-                #         clean_output_match_top5 = False
+                    if faulty_output_match:
+                        faulty_output_match_counter += 1
+                        
 
-                #     if clean_output_label in top5_indices_faulty:
-                #         faulty_output_match_top5 = True
-                #     else:
-                #         faulty_output_match_top5 = False
-
-                #     if clean_output_match_top5:
-                #         clean_output_match_counter_sdc5 += 1
-                #         clean_sdc_5 = 'N'
-                #     else:
-                #         clean_sdc_5 = 'Y'
-
-                #     if faulty_output_match_top5:
-                #         faulty_output_match_counter_sdc5 += 1
-                #         faulty_sdc_5 = 'N'
-                #     else:
-                #         faulty_sdc_5 = 'Y'
-                    
-                
-                    
-                # top5_indices = np.argsort(faulty_tensor_data[z, i, j, :])[::-1][:5]
-
-                # if clean_output_argmax in top5_indices:           
-                #     best5_flag = 'Y'
-                # else:
-                #     best5_c += 1
-                #     best5_flag = 'N'           
-                    
                     # comparing and save in the .csv the results
                     if np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
                         masked += 1
@@ -782,31 +721,54 @@ def output_definition(batch_size):
                         critical += 1
                         output_results_list.append('2')
                         csv_writer.writerow([z, i, j, '2'])
-                                                            
-        # print the results
-        print(f'total outputs: {masked + not_critical + critical}')
-        print('masked:', masked)
-        print(f'% masked faults: {100*masked/(masked + not_critical + critical)} %')
-        print('not critical faults:', not_critical)
-        print(f'% not critical: {100*not_critical/(masked + not_critical + critical)} %')
-        print('SDC-1:', critical)   
-        print(f'% critical: {100*critical/(masked + not_critical + critical)} %')
+
+
+    del loaded_clean_output
+    del faulty_tensor_data
+
+    if SETTINGS.RAM_LIMIT:
+        print('loading csv file...')
+        df = pd.read_csv(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv')
+        output_count = df['output'].value_counts()
         
-        # statistics
-        total_outputs = masked + not_critical + critical
-        percent_masked = 100 * masked / total_outputs
-        percent_not_critical = 100 * not_critical / total_outputs
-        percent_critical = 100 * critical / total_outputs
+        masked = output_count[0]
+        not_critical = output_count[1]
+        critical = output_count[2]
+ 
+    # print the results
+    print(f'total outputs: {masked + not_critical + critical}')
+    print('masked:', masked)
+    print(f'% masked faults: {100*masked/(masked + not_critical + critical)} %')
+    print('not critical faults:', not_critical)
+    print(f'% not critical: {100*not_critical/(masked + not_critical + critical)} %')
+    print('SDC-1:', critical)   
+    print(f'% critical: {100*critical/(masked + not_critical + critical)} %')
+    print(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %')
+    
+    # statistics
+    total_outputs = masked + not_critical + critical
+    percent_masked = 100 * masked / total_outputs
+    percent_not_critical = 100 * not_critical / total_outputs
+    percent_critical = 100 * critical / total_outputs
+    
+    with open(f'{SETTINGS.FI_ANALYSIS_PATH}/fault_statistics.txt', 'w') as file:
+        file.write(f'total outputs: {total_outputs}\n')
+        file.write(f'masked: {masked}\n')
+        file.write(f'% masked faults: {percent_masked} %\n')
+        file.write(f'not critical faults: {not_critical}\n')
+        file.write(f'% not critical: {percent_not_critical} %\n')
+        file.write(f'SDC-1: {critical}\n')
+        file.write(f'% critical: {percent_critical} %\n')
+        file.write(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %\n')
+    
+
+    if SETTINGS.RAM_LIMIT:
+        del df
+        del output_count
         
-        with open(f'{SETTINGS.FI_ANALYSIS_PATH}/fault_statistics.txt', 'w') as file:
-            file.write(f'total outputs: {total_outputs}\n')
-            file.write(f'masked: {masked}\n')
-            file.write(f'% masked faults: {percent_masked} %\n')
-            file.write(f'not critical faults: {not_critical}\n')
-            file.write(f'% not critical: {percent_not_critical} %\n')
-            file.write(f'SDC-1: {critical}\n')
-            file.write(f'% critical: {percent_critical} %\n')
-       
+        
+        
+            
 
     return output_results_list
 

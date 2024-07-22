@@ -2,7 +2,7 @@ import copy
 import os
 import torch
 import SETTINGS
-from faultManager.FaultListManager import FaultListManager
+from faultManager.FaultListManager import FLManager
 from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition,  \
@@ -78,7 +78,7 @@ def main():
         clean_ofm_manager.load_clean_output()
 
         # Generate fault list
-        fault_list_generator = FaultListManager(network=network,
+        fault_list_generator = FLManager(network=network,
                                                 network_name=SETTINGS.NETWORK,
                                                 device=device,
                                                 module_class=SETTINGS.MODULE_CLASSES_FAULT_LIST,
@@ -114,14 +114,27 @@ def main():
         print('Fault injection is disabled')
         
     if SETTINGS.FI_ANALYSIS:
+        try:
+            output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
+            print('Done')
+        except:
+            print('No loader found to save the labels, creating a new one')
+            _, loader = get_loader(network_name=SETTINGS.NETWORK,
+                            batch_size=SETTINGS.BATCH_SIZE,
+                            dataset_name=SETTINGS.DATASET)
+            output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
+            print('Done')
             
-        output_definition(batch_size=SETTINGS.BATCH_SIZE)
+       
+        
+        
     else:
         print('Fault injection analysis is disabled')
     
     if SETTINGS.FI_ANALYSIS_SUMMARY:
+        print('Generating csv summary')
         csv_summary()
-        
+        print('csv summary generated')
         
 
 

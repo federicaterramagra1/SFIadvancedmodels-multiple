@@ -19,7 +19,7 @@ import SETTINGS
 import SETTINGS
 
 
-class FaultListManager:
+class FLManager:
 
     def __init__(self,
                  network: Module,
@@ -33,12 +33,6 @@ class FaultListManager:
         self.network_name = network_name
 
         self.device = device
-
-        # ---------------------------- momodifiche fate da me (ATTENZIONE) ----------------------------
-        # self.feature_maps_layer_names = [name.replace('.weight', '') for name, module in self.network.named_modules()
-        #                                  if isinstance(module, module_classes = torch.nn.Conv2d)]
-        
-        # ---------------------------- ---------------------------- ----------------------------
 
         # The class of the injectable modules
         # TODO: extend to multiple module class
@@ -63,24 +57,6 @@ class FaultListManager:
 
         # The fault list
         self.fault_list = None
-
-    # @staticmethod
-    # def __compute_date_n(N: int,
-    #                      p: float = 0.5,
-    #                      e: float = 0.01,
-    #                      t: float = 2.58):
-    #     """
-    #     Compute the number of faults to inject according to the DATE09 formula
-    #     :param N: The total number of parameters. If None, compute the infinite population version
-    #     :param p: Default 0.5. The probability of a fault
-    #     :param e: Default 0.01. The desired error rate
-    #     :param t: Default 2.58. The desired confidence level
-    #     :return: the number of fault to inject
-    #     """
-    #     if N is None:
-    #         return p * (1-p) * t ** 2 / e ** 2
-    #     else:
-    #         return N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p)))
 
 
 
@@ -139,12 +115,7 @@ class FaultListManager:
 
 
     def get_neuron_fault_list(self
-                            #   load_fault_list: bool = False,
-                            #   save_fault_list: bool = True,
-                            #   seed: int = 51195,
-                            #   p: float = 0.5,
-                            #   e: float = 0.01,
-                            #   t: float = 2.58
+                           
                             ):
         """
         Generate a fault list for the neurons according to the DATE09 formula
@@ -178,65 +149,7 @@ class FaultListManager:
         except FileNotFoundError:
             print('Fault list not found')
             exit(-1)
-            # Initialize the random number generator
-            random_generator = np.random.default_rng(seed=seed)
-
-            # Compute how many fault can be injected per layer
-            possible_faults_per_layer = [injectable_layer.output_shape[1] * injectable_layer.output_shape[2] * injectable_layer.output_shape[3]
-                                         for injectable_layer in self.injectable_output_modules_list]
-
-            # The population of faults
-            total_possible_faults = np.sum(possible_faults_per_layer)
-
-            # The percentage of fault to inject in each layer
-            probability_per_layer = [possible_faults / total_possible_faults for possible_faults in possible_faults_per_layer]
-
-            # Compute the total number of fault to inject
-            n = self.__compute_date_n(N=int(total_possible_faults),
-                                      p=p,
-                                      t=t,
-                                      e=e)
-
-            # Compute the number of fault to inject in each layer
-            injected_faults_per_layer = [math.ceil(probability * n) for probability in probability_per_layer]
-
-            fault_list = list()
-
-            pbar = tqdm(zip(injected_faults_per_layer, self.injectable_output_modules_list),
-                        desc='Generating fault list',
-                        colour='green')
-
-            # For each layer, generate the fault list
-            for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
-                for i in range(n_per_layer):
-
-                    channel = random_generator.integers(injectable_layer.output_shape[1])
-                    height = random_generator.integers(injectable_layer.output_shape[2])
-                    width = random_generator.integers(injectable_layer.output_shape[3])
-                    value = random_generator.random() * 2 - 1
-
-                    fault_list.append(NeuronFault(layer_name=injectable_layer.layer_name,
-                                                  layer_index=layer_index,
-                                                  feature_map_index=(channel, height, width),
-                                                  value=value))
-
-            if save_fault_list:
-                os.makedirs(fault_list_filename, exist_ok=True)
-                with open(f'{fault_list_filename}/{seed}_neuron_fault_list.csv', 'w', newline='') as f_list:
-                    writer_fault = csv.writer(f_list)
-                    writer_fault.writerow(['Injection',
-                                           'LayerName',
-                                           'LayerIndex',
-                                           'FeatureMapIndex',
-                                           'Value'])
-                    for index, fault in enumerate(fault_list):
-                        writer_fault.writerow([index, fault.layer_name, fault.layer_index, fault.feature_map_index, fault.value])
-
-
-            print('Fault List Generated')
-
-        self.fault_list = fault_list
-        return fault_list
+           
 
 
     def get_weight_fault_list(self
