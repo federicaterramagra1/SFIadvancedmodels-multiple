@@ -22,7 +22,7 @@ DATASET available: 'CIFAR10', 'CIFAR100', 'GTSRB'
 
 '''
 # enable the fault list generation
-FAULT_LIST_GENERATION = False
+FAULT_LIST_GENERATION = True
 
 # enable the fault injection
 FAULTS_INJECTION = False
@@ -36,7 +36,7 @@ DATASET_NAME = 'CIFAR10'
 NETWORK_NAME = 'ResNet20'
 
 # if you want to check  only the accuracy of the clean model
-ONLY_CLEAN_INFERENCE = False
+ONLY_CLEAN_INFERENCE = True
 # ------------------------------------ FAULT LIST SETTINGS ------------------------------------
 
 
@@ -46,7 +46,7 @@ SEED = 38
 
 # FAULT LIST PARAMETERS
 error_margin = 0.01
-probability = 0.5
+probability = 0.7
 confidence_constant = 2.58
 bit = 32
 
@@ -68,7 +68,7 @@ USE_CUDA_1 = False
 NO_LOG_RESULTS = False
 
 # test set batch size
-BATCH_SIZE = 254
+BATCH_SIZE = 64
 
 # fault model to use (check the top of the file for the available models)
 FAULT_MODEL = 'stuck-at_params'

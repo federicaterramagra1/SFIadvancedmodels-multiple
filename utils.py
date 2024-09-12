@@ -684,7 +684,7 @@ def output_definition(test_loader, batch_size):
     with open(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv', mode='a') as file_csv:
 
         csv_writer = csv.writer(file_csv)
-        if SETTINGS.BATCH_START == 0:
+        if SETTINGS.BATCH_START == 0 or SETTINGS.RAM_LIMIT == False:
             csv_writer.writerow(['fault', 'batch', 'image', 'output'])
 
         print(f'faults: {n_faults}, batches: {number_of_batch}')
