@@ -46,7 +46,7 @@ SEED = 38
 
 # FAULT LIST PARAMETERS
 error_margin = 0.01
-probability = 0.7
+probability = 0.5
 confidence_constant = 2.58
 bit = 32
 
