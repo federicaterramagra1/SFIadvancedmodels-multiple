@@ -151,3 +151,7 @@ Due to the verbosity of the `output_analysis.csv` file, if many faults are injec
 - `masked`: Number of dataset inferences that identified the fault as masked.
 - `non_critical`: Number of dataset inferences that identified the fault as non-critical.
 - `critical`: Number of dataset inferences that identified the fault as critical (SDC-1).
+
+# Acknowledgments
+
+This study was carried out within the FAIR - Future Artificial Intelligence Research and received funding from the European Union Next-GenerationEU (PIANO NAZIONALE DI RIPRESA E RESILIENZA (PNRR) – MISSIONE 4 COMPONENTE 2, INVESTIMENTO 1.3 – D.D. 1555 11/10/2022, PE00000013). This manuscript reflects only the authors’ views and opinions, neither the European Union nor the European Commission can be considered responsible for them.
