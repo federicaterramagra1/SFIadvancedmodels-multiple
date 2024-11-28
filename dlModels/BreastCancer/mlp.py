@@ -1,0 +1,84 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from torch.quantization import quantize_dynamic
+import numpy as np
+import random
+
+SEED = 42
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+random.seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
+
+# Carica il dataset Breast Cancer
+data = load_breast_cancer()
+X = data.data
+y = data.target
+
+# Dividi i dati in train e test
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Normalizza le caratteristiche (scaling)
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+# Converti i dati in tensori PyTorch
+X_train = torch.tensor(X_train, dtype=torch.float32)
+X_test = torch.tensor(X_test, dtype=torch.float32)
+y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
+
+# Definire il modello MLP
+class SimpleMLP(nn.Module):
+    def __init__(self):
+        super(SimpleMLP, self).__init__()
+        self.fc1 = nn.Linear(30, 5)  # 30 input features (Breast Cancer), 5 hidden units (30*5 = 150 pesi)
+        self.fc2 = nn.Linear(5, 1)   # 5 hidden units, 1 output (5*1 = 5 pesi)
+    
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.sigmoid(self.fc2(x))  # Sigmoid per la classificazione binaria
+        return x
+
+# Crea un'istanza del modello
+model = SimpleMLP()
+
+# Definire una loss (Binary Cross Entropy) e un optimizer
+criterion = nn.BCELoss()  # Binary Cross Entropy Loss per classificazione binaria
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# Training loop di base
+num_epochs = 100
+for epoch in range(num_epochs):
+    optimizer.zero_grad()  # Resetto i gradienti
+    outputs = model(X_train)  # Calcolo l'output
+    loss = criterion(outputs, y_train)  # Calcolo la loss
+    loss.backward()  # Backpropagation
+    optimizer.step()  # Aggiorno i pesi
+
+    if epoch % 10 == 0:
+        print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item()}')
+
+# Applica la quantizzazione dinamica
+quantized_model = quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
+
+# Stampa il modello quantizzato
+print(quantized_model)
+
+# Valutazione del modello sui dati di test
+quantized_model.eval()  # Metti il modello in modalità valutazione
+
+with torch.no_grad():  # Disattiva il calcolo dei gradienti durante la valutazione
+    test_outputs = quantized_model(X_test)
+    test_loss = criterion(test_outputs, y_test)
+    predictions = (test_outputs > 0.5).float()  # Converte l'output in valori binari (0 o 1)
+    accuracy = (predictions == y_test).float().mean()
+
+    print(f'Test Loss: {test_loss.item()}')
+    print(f'Accuracy: {accuracy.item() * 100:.2f}%')

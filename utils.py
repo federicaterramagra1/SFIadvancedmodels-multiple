@@ -171,6 +171,13 @@ def get_network(network_name: str,
         load_from_dict(network=network,
                         device=device,
                         path=network_path)
+    elif dataset_name == 'BreastCancer':
+        print(f'Loading network {network_name} for BreastCancer ...')
+    if network_name == 'SimpleMLP':
+        from dlModels.BreastCancer.mlp import SimpleMLP
+        network = SimpleMLP()
+    else:
+        raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
 
     network.to(device)
     network.eval()

@@ -11,12 +11,10 @@ from dlModels.CIFAR100 import densenet_cifar100, resnet_cifar100, googlenet_cifa
 FAULT_MODEL available: 'stuck-at_params', 'byzantine_neuron'
 
 
-NETWORK available: 'ResNet18', 'ResNet20', 'ResNet32', 'ResNet44', 
-                          'DenseNet121', 'DenseNet161','MobileNetV2', 
-                          'GoogLeNet', 'Vgg11_bn', 'Vgg13_bn'
+NETWORK available: 'SimpleMLP'
 
 
-DATASET available: 'CIFAR10', 'CIFAR100', 'GTSRB'
+DATASET available: 'BreastCancer'
 
 
 
@@ -32,8 +30,8 @@ FI_ANALYSIS = False
 FI_ANALYSIS_SUMMARY = True
 
 # network and dataset to use
-DATASET_NAME = 'CIFAR10'
-NETWORK_NAME = 'ResNet20'
+DATASET_NAME = 'BreastCancer'
+NETWORK_NAME = 'SimpleMLP'
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = True
@@ -103,7 +101,7 @@ SAVE_FAULTY_OUTPUT = True
 
 # OFM TO SAVE
 if SAVE_FAULTY_OFM:   
-    INPUT_FMAPS_TO_SAVE = 'layer1.0.conv1'
+    INPUT_FMAPS_TO_SAVE = 'fc1'
 else:
     INPUT_FMAPS_TO_SAVE = None
 
@@ -118,8 +116,8 @@ FAULTY_FM_FOLDER = f'output/faulty_feature_maps/{DATASET}/{NETWORK}/batch_{BATCH
 FAULTY_OUTPUT_FOLDER = f'output/faulty_output/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}'
 
 # MODULES TO SAVE OFM AND IFM
-MODULE_CLASSES = (torch.nn.Conv2d)
-MODULE_CLASSES_FAULT_LIST = (torch.nn.Conv2d)
+MODULE_CLASSES = (torch.nn.Linear)
+MODULE_CLASSES_FAULT_LIST = (torch.nn.Linear)
 
 # DATASET PATHS
 DATASET_PATH = f'Datasets/'
