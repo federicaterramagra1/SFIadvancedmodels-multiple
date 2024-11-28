@@ -19,6 +19,11 @@ DATASET available: 'BreastCancer'
 
 
 '''
+# SETTINGS.py
+# faults to inject
+FAULTS_TO_INJECT = 1  # 1 /2 / 3
+
+
 # enable the fault list generation
 FAULT_LIST_GENERATION = True
 

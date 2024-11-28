@@ -832,11 +832,16 @@ def csv_summary():
     df2.to_csv(output_file_path, index=False)  
     
 
+import numpy as np
 import random
+import torch
+import csv
+import os
+import SETTINGS
 
 def fault_list_gen():
-    # Set a seed for reproducibility
-    random_seed = SETTINGS.SEED  # Puoi usare un seed fisso per debug
+    # Imposta un seed per la riproducibilità
+    random_seed = SETTINGS.SEED
 
     PRINT = True
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -846,6 +851,7 @@ def fault_list_gen():
                           dataset_name=SETTINGS.DATASET_NAME)
     network.to(device)
 
+    # Crea una lista delle dimensioni dei layer e dei parametri
     layer_params_list = [(name, param.numel()) for name, param in network.named_parameters() if len(param.size()) >= 2]
     layer_dimensions_list = [(name, np.array(param.size())) for name, param in network.named_parameters() if len(param.size()) >= 2]
 
@@ -865,7 +871,8 @@ def fault_list_gen():
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
     csv_filename = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
     header = ['Injection', 'Layer', 'TensorIndex1', 'Bit1', 'TensorIndex2', 'Bit2']
-    
+
+    # Creazione del file CSV per gli errori
     with open(csv_filename, 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(header)
@@ -887,8 +894,9 @@ def fault_list_gen():
                         index1 = tuple(random.randint(0, dim - 1) for dim in layer_dimensions)
                         index2 = tuple(random.randint(0, dim - 1) for dim in layer_dimensions)
                     elif len(layer_dimensions) == 2:
-                        index1 = tuple(random.randint(0, layer_dimensions[0] - 1), random.randint(0, layer_dimensions[1] - 1))
-                        index2 = tuple(random.randint(0, layer_dimensions[0] - 1), random.randint(0, layer_dimensions[1] - 1))
+                        # Correzione per i layer 2D
+                        index1 = tuple((random.randint(0, layer_dimensions[0] - 1), random.randint(0, layer_dimensions[1] - 1)))
+                        index2 = tuple((random.randint(0, layer_dimensions[0] - 1), random.randint(0, layer_dimensions[1] - 1)))
 
                     bit1 = random.randint(0, 31)
                     bit2 = random.randint(0, 31)
@@ -909,67 +917,42 @@ def fault_list_gen():
 
     print(f"CSV file '{csv_filename}' created with {row_number} rows.")
 
-    # LIST OF LAYER NAMES AND TOTAL PARAMETERS
+    # Lista dei layer e dei parametri totali
     if PRINT:
         print("\nList of Layer Names and Total Parameters:")
     for layer_name, layer_param in layer_params_list:
         if PRINT:
             print(f"Layer: {layer_name}, Total Parameters: {layer_param}")
-            total_params = total_params + layer_param
-
-    print(f"total params: {total_params}") 
         
-    p = SETTINGS.probability
-    e = SETTINGS.error_margin
-    t = SETTINGS.confidence_constant
-    N = total_sum_params*SETTINGS.bit*2
+    total_params = sum(param[1] for param in layer_params_list)
+    print(f"Total params: {total_params}")
 
-    print(f"total faults: {N}")
+    # Ricalcola i guasti da iniettare
+    fault_to_inject = round(N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p))))
 
-    fault_to_inject = round(N/(1+e**2*(N-1)/(t**2*p*(1-p))))
-
-    print(f"fault to inject: {fault_to_inject}")
+    print(f"Faults to inject: {fault_to_inject}")
 
     faults_to_inject_list = []
-
     for layer_name, total_params in layer_params_list:
-        y = round((total_params * fault_to_inject) / total_sum_params)
-        faults_to_inject_list.append((layer_name, y))
+        faults_to_inject = round((total_params * fault_to_inject) / total_params)
+        faults_to_inject_list.append((layer_name, faults_to_inject))
 
-    # -----------------------------------------------------------------------------------------------
-
-    # LIST OF FAULTS TO INJECT FOR EACH LAYER
+    # Mostra la lista dei guasti da iniettare
     print("\nList of Faults to Inject for Each Layer:")
     for layer_name, faults_to_inject in faults_to_inject_list:
         if PRINT:
             print(f"Layer: {layer_name}, Faults to Inject: {faults_to_inject}")
         
+    # Creazione delle dimensioni dei layer
+    layer_dimensions_list = [(name, np.array(param.size())) for name, param in network.named_parameters() if len(param.size()) >= 2]
 
-    import numpy as np
-
-    # Create a list or dictionary to store layer dimensions as NumPy arrays
-    layer_dimensions_list = []
-
-    # Iterate through the named parameters and save the dimensions
-    for layer_name, parameters in network.named_parameters():
-        if len(parameters.size()) >= 2:
-            layer_dimensions = parameters.size()
-            layer_dimensions_np = np.array(layer_dimensions)
-            layer_dimensions_list.append((layer_name, layer_dimensions_np))
-
-    # -----------------------------------------------------------------------------------------------
-
-    # LIST OF LAYER NAMES AND DIMENSIONS
+    # Mostra le dimensioni dei layer
     print("\nList of Layer Names and Dimensions:")
     for layer_name, dimensions in layer_dimensions_list:
         if PRINT:
             print(f"Layer: {layer_name}, Dimensions: {dimensions}")
 
-    import csv
-    import random
-
-
-
+    # Generazione finale del file CSV
     random.seed(random_seed)
 
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
@@ -978,22 +961,18 @@ def fault_list_gen():
     counter = 0
     with open(csv_filename, 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
-        # Write the header to the CSV file
         csv_writer.writerow(header)
 
-        # Use a set to keep track of generated indices
         used_indices = set()
-        # Iterate through each fault to inject for each layer
         row_number = 0
-        max_attempts = 1000  # Adjust as needed
+        max_attempts = 1000
+
         for injection_number, (layer_name, total_params) in enumerate(layer_params_list):
             layer_dimensions = next(dimensions for name, dimensions in layer_dimensions_list if name == layer_name)
             for _ in range(faults_to_inject_list[injection_number][1]):
-                
                 attempts = 0
                 while attempts < max_attempts:
                     if len(layer_dimensions) == 4:
-                        # Generate random indices within the layer dimensions
                         height_index = random.randint(0, layer_dimensions[0] - 1)
                         width_index = random.randint(0, layer_dimensions[1] - 1)
                         depth_index = random.randint(0, layer_dimensions[2] - 1)
@@ -1011,24 +990,20 @@ def fault_list_gen():
 
                     bit_flip = random.randint(0, 31)
                     
+                    # Verifica se il nome del layer e gli indici sono già stati usati
                     layer_name_no_weight = layer_name.replace('.weight', '')
-
-                    # Check if the combination of layer_name, tensor_index, and bit_flip is already used
                     index_key = (layer_name_no_weight, tensor_index, bit_flip)
                     if index_key not in used_indices:
-                        break  # Break the loop if the combination is unique
+                        break
                     else:
                         attempts += 1
-                        counter = counter + 1
+                        counter += 1
 
                 if attempts == max_attempts:
                     print(f"Could not find a unique combination for {layer_name}. Increase max_attempts if needed.")
                     break
 
-                # Add the combination to the set of used indices
                 used_indices.add(index_key)
-
-                # Write the data to the CSV file
                 csv_writer.writerow([row_number, layer_name_no_weight, tensor_index, bit_flip])
                 row_number += 1
 
@@ -1036,5 +1011,3 @@ def fault_list_gen():
     print(f"Number of duplicate indices: {row_number - len(used_indices)}")
     print(f"Number of unique indices: {len(used_indices)}")
     print(f"CSV file '{csv_filename}' has been created successfully.")
-
-

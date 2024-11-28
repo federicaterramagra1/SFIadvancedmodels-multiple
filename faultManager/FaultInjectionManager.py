@@ -30,8 +30,8 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
-                 injectable_modules: List[Union[Module, List[Module]]] = None):
-
+                 injectable_modules: List[Union[Module, List[Module]]] = None,
+                 num_faults_to_inject: int = 1):  # Aggiunto il parametro num_faults_to_inject
         self.network = network
         self.network_name = network_name
         self.loader = loader
@@ -39,6 +39,10 @@ class FaultInjectionManager:
 
         self.clean_output = clean_output
         self.faulty_output = list()
+
+        # Nuovo attributo
+        self.num_faults_to_inject = num_faults_to_inject  # Memorizza il numero di guasti
+
 
         # The folder used for the logg
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
@@ -70,85 +74,61 @@ class FaultInjectionManager:
             self.network(data)
 
 
-    def run_faulty_campaign_on_weight(self,
-                                      fault_model: str,
-                                      fault_list: list,
-                                      first_batch_only: bool = False,
-                                      force_n: int = None,
-                                      save_output: bool = False,
-                                      save_ofm: bool = False,
-                                      ofm_folder: str = None) -> (str, int):
-        """
-        Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
-        layer, loading the input feature maps of the previous layer
-        :param fault_model: The faut model for the injection
-        :param fault_list: list of fault to inject. One of ['byzantine_neuron', 'stuck-at_params']
-        :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
-        batch only
-        :param force_n: Default None. If set, inject only force_n faults in the network
-        :param save_output: Default False. Whether to save the output of the network or not
-        :param save_ofm: Default False. Whether to save the ofm of the injectable layers
-        :param ofm_folder: Default None. The folder where to save the ofms if save_fm is true
-        :return: A tuple formed by : (i) a string containing the formatted time elapsed from the beginning to the end of
-        the fault injection campaign, (ii) an integer measuring the average memory occupied (in MB)
-        """
+def run_faulty_campaign_on_weight(self,
+                                  fault_model: str,
+                                  fault_list: list,
+                                  first_batch_only: bool = False,
+                                  force_n: int = None,
+                                  save_output: bool = False,
+                                  save_ofm: bool = False,
+                                  ofm_folder: str = None) -> (str, int):
+    """
+    Run a faulty injection campaign for the network with support for multiple faults injection (1, 2, or 3).
+    """
 
-        self.skipped_inferences = 0
-        self.total_inferences = 0
+    self.skipped_inferences = 0
+    self.total_inferences = 0
 
-        total_different_predictions = 0
-        total_predictions = 0
+    total_different_predictions = 0
+    total_predictions = 0
 
-        average_memory_occupation = 0
-        total_iterations = 1
+    average_memory_occupation = 0
+    total_iterations = 1
 
-        with torch.no_grad():
+    with torch.no_grad():
 
-            if force_n is not None:
-                fault_list = fault_list[:force_n]
+        if force_n is not None:
+            fault_list = fault_list[:force_n]
 
-            # Order the fault list to speed up the injection
-            # This is also important to avoid differences between a
-            fault_list = sorted(fault_list, key=lambda x: x.injection)
+        # Ordina la lista di guasti
+        fault_list = sorted(fault_list, key=lambda x: x.injection)
 
-            # Start measuring the time elapsed
-            start_time = time.time()
+        start_time = time.time()
 
-            # The dict measuring the accuracy of each batch
-            accuracy_dict = dict()
+        accuracy_dict = dict()
 
-            # Cycle all the batches in the data loader
-            for batch_id, batch in enumerate(self.loader):
-                data, target = batch
-                data = data.to(self.device)
+        # Ciclo sui batch nel data loader
+        for batch_id, batch in enumerate(self.loader):
+            data, target = batch
+            data = data.to(self.device)
 
-                # The list of the accuracy of the network for each fault
-                accuracy_batch_dict = dict()
-                accuracy_dict[batch_id] = accuracy_batch_dict
+            accuracy_batch_dict = dict()
+            accuracy_dict[batch_id] = accuracy_batch_dict
 
-                faulty_prediction_dict = dict()
-                batch_clean_prediction_scores = [float(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).values]
-                batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
+            faulty_prediction_dict = dict()
+            batch_clean_prediction_scores = [float(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).values]
+            batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
 
-
-                # Inject all the faults in a single batch
-                pbar = tqdm(fault_list,
-                            colour='green',
-                            desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns * 2)
-                for fault_id, fault in enumerate(pbar):
-                    # fault._print()
-                    # Change the description of the progress bar
-                    # if fault_dropping and fault_delayed_start:
-                    #     pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')
-                    # elif fault_dropping:
-                    #     pbar.set_description(f'FI (w/ drop) on b {batch_id}')
-                    # elif fault_delayed_start:
-                    #     pbar.set_description(f'FI (w/ delayed) on b {batch_id}')
-
+            # Inietta il numero richiesto di guasti in un singolo batch
+            pbar = tqdm(fault_list,
+                        colour='green',
+                        desc=f'FI on b {batch_id}',
+                        ncols=shutil.get_terminal_size().columns * 2)
+            for fault_id, fault in enumerate(pbar):
+                # Logica per iniettare il numero richiesto di guasti (1, 2 o 3)
+                for _ in range(self.num_faults_to_inject):
                     # ----------------------------- #
-
-                    # Inject faults
+                    # Inietta i guasti in base al modello
                     if fault_model == 'byzantine_neuron':
                         injected_layer = self.__inject_fault_on_neuron(fault=fault)
                     elif fault_model == 'stuck-at_params':
@@ -156,41 +136,40 @@ class FaultInjectionManager:
                     else:
                         raise ValueError(f'Invalid fault model {fault_model}')
 
-                    # Reset memory occupation stats
+                    # Inizia a misurare l'occupazione della memoria
                     torch.cuda.reset_peak_memory_stats()
 
-                    # If you have to save the ifm, update the file names
+                    # Se è necessario salvare gli IFM, aggiorna i nomi dei file
                     if save_ofm:
                         for injectable_module in self.injectable_modules:
                             injectable_module.ifm_path = f'{ofm_folder}/fault_{fault_id}_batch_{batch_id}_layer_{injectable_module.layer_name}'
 
-                    # Run inference on the current batch
+                    # Esegui l'inferenza con i guasti iniettati
                     faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
                                                                                                          data=data)
 
-                    # Measure the memory occupation
+                    # Misura l'occupazione della memoria
                     memory_occupation = (torch.cuda.max_memory_allocated() + torch.cuda.max_memory_reserved()) // (1024**2)
                     average_memory_occupation = ((total_iterations - 1) * average_memory_occupation + memory_occupation) // total_iterations
 
-                    # If fault prediction is None, the fault had no impact. Use golden predictions
+                    # Se la previsione con i guasti è None, significa che non c'è stato impatto
                     if faulty_indices is None:
                         faulty_scores = self.clean_output[batch_id]
                         faulty_indices = batch_clean_prediction_indices
 
-                    # Measure the accuracy of the batch
+                    # Calcola la precisione per batch
                     accuracy_batch_dict[fault_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices)))/len(target))
 
-                    # Move the scores to the gpu
+                    # Memorizza i risultati delle previsioni con i guasti
                     faulty_scores = faulty_scores.detach().cpu()
-
                     faulty_prediction_dict[fault_id] = tuple(zip(faulty_indices, faulty_scores))
                     total_different_predictions += different_predictions
 
-                    # Store the faulty prediction if the option is set
+                    # Salva l'output se richiesto
                     if save_output:
                         self.faulty_output.append(faulty_scores.numpy())
 
-                    # Measure the loss in accuracy
+                    # Aggiorna il progresso
                     total_predictions += len(batch[0])
                     different_predictions_percentage = 100 * total_different_predictions / total_predictions
                     pbar.set_postfix({'Different': f'{different_predictions_percentage:.6f}%',
@@ -198,7 +177,7 @@ class FaultInjectionManager:
                                       'Avg. memory': f'{average_memory_occupation} MB'}
                                      )
 
-                    # Clean the fault
+                    # Rimuovi il guasto iniettato
                     if fault_model == 'byzantine_neuron':
                         injected_layer.clean_fault()
                     elif fault_model == 'stuck-at_params':
@@ -206,44 +185,40 @@ class FaultInjectionManager:
                     else:
                         raise ValueError(f'Invalid fault model {fault_model}')
 
-                    # Increment the iteration count
                     total_iterations += 1
 
-                # Log the accuracy of the batch
-                os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
-                log_filename = f'{self.__log_folder}/{fault_model}/batch_{batch_id}.csv'
-                with open(log_filename, 'w') as log_file:
-                    log_writer = csv.writer(log_file)
-                    log_writer.writerows(accuracy_batch_dict.items())
+            # Log delle metriche di accuratezza per il batch
+            os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
+            log_filename = f'{self.__log_folder}/{fault_model}/batch_{batch_id}.csv'
+            with open(log_filename, 'w') as log_file:
+                log_writer = csv.writer(log_file)
+                log_writer.writerows(accuracy_batch_dict.items())
 
-                # Save the output to file if the option is set
-                if save_output:
-                    os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
-                    np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
-                    self.faulty_output = list()
+            # Salva l'output dei guasti se richiesto
+            if save_output:
+                os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
+                np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
+                self.faulty_output = list()
 
-                # End after only one batch if the option is specified
-                if first_batch_only:
-                    break
+            # Se necessario, termina dopo il primo batch
+            if first_batch_only:
+                break
 
+    # Calcola la media dell'accuratezza
+    average_accuracy_dict = dict()
+    for fault_id in range(len(fault_list)):
+        fault_accuracy = np.average([accuracy_batch_dict[fault_id] for _, accuracy_batch_dict in accuracy_dict.items()])
+        average_accuracy_dict[fault_id] = float(fault_accuracy)
 
-        # Measure the average accuracy
-        average_accuracy_dict = dict()
-        for fault_id in range(len(fault_list)):
-            fault_accuracy = np.average([accuracy_batch_dict[fault_id] for _, accuracy_batch_dict in accuracy_dict.items()])
-            average_accuracy_dict[fault_id] = float(fault_accuracy)
+    # Log finale
+    os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
+    log_filename = f'{self.__log_folder}/{fault_model}/all_batches.csv'
+    with open(log_filename, 'w') as log_file:
+        log_writer = csv.writer(log_file)
+        log_writer.writerows(average_accuracy_dict.items())
 
-        # Final log
-        os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
-        log_filename = f'{self.__log_folder}/{fault_model}/all_batches.csv'
-        with open(log_filename, 'w') as log_file:
-            log_writer = csv.writer(log_file)
-            log_writer.writerows(average_accuracy_dict.items())
-
-
-        elapsed = math.ceil(time.time() - start_time)
-
-        return str(timedelta(seconds=elapsed)), average_memory_occupation
+    elapsed = math.ceil(time.time() - start_time)
+    return str(timedelta(seconds=elapsed)), average_memory_occupation
 
 
     def __run_inference_on_batch(self,
