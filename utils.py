@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import random
 import pandas as pd
 import shutil
 from typing import Union, List, Tuple
@@ -26,7 +27,6 @@ from torchvision.transforms.v2 import ToTensor,Resize,Compose,ColorJitter,Random
 import csv
 from tqdm import tqdm
 
-import random
 
 
 class UnknownNetworkException(Exception):
@@ -832,12 +832,11 @@ def csv_summary():
     df2.to_csv(output_file_path, index=False)  
     
 
-
+import random
 
 def fault_list_gen():
     # Set a seed for reproducibility
     random_seed = SETTINGS.SEED  # Puoi usare un seed fisso per debug
-    random.seed(random_seed)
 
     PRINT = True
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
