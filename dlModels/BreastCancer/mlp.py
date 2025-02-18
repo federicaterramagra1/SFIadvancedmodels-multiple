@@ -38,8 +38,8 @@ y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
 class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
-        self.fc1 = nn.Linear(30, 5)  # 30 input features (Breast Cancer), 5 hidden units (30*5 = 150 pesi)
-        self.fc2 = nn.Linear(5, 1)   # 5 hidden units, 1 output (5*1 = 5 pesi)
+        self.fc1 = nn.Linear(30, 4)  # 30 input features (Breast Cancer), 5 hidden units (30*5 = 150 pesi)
+        self.fc2 = nn.Linear(4, 1)   # 5 hidden units, 1 output (5*1 = 5 pesi)
     
     def forward(self, x):
         x = torch.relu(self.fc1(x))
@@ -82,3 +82,11 @@ with torch.no_grad():  # Disattiva il calcolo dei gradienti durante la valutazio
 
     print(f'Test Loss: {test_loss.item()}')
     print(f'Accuracy: {accuracy.item() * 100:.2f}%')
+
+# Funzione per contare i parametri
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+# Conta e stampa il numero totale di parametri
+total_params = count_parameters(model)
+print(f'Numero totale di parametri: {total_params}')
