@@ -212,7 +212,13 @@ def get_loader(network_name: str,
     elif 'GTSRB' == dataset_name:
         print('Loading GTSRB dataset')
         train_loader, _, loader = Load_GTSRB_datasets(test_batch_size=batch_size,
+    
                                              test_image_per_class=image_per_class)
+    elif dataset_name == 'BreastCancer':
+        print('Loading BreastCancer dataset...')
+        train_loader, _, loader = load_BreastCancer_datasets(test_batch_size=batch_size,
+                                                             test_image_per_class=image_per_class)
+
     else:
         print('no dataset specified')
         exit()
@@ -576,6 +582,33 @@ def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=
 
     return train_loader, val_loader, test_loader
 
+def load_breastCancer_datasets(train_batch_size=32, test_batch_size=1, test_size=0.2):
+
+    # Load the breast cancer dataset
+    data = load_breast_cancer()
+    features = data.data
+    labels = data.target
+
+    # Split into training and testing datasets
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=test_size, random_state=42)
+
+    # Convert to tensors
+    train_features_tensor = torch.tensor(X_train, dtype=torch.float32)
+    train_labels_tensor = torch.tensor(y_train, dtype=torch.long)
+    test_features_tensor = torch.tensor(X_test, dtype=torch.float32)
+    test_labels_tensor = torch.tensor(y_test, dtype=torch.long)
+
+    # Create TensorDataset
+    train_dataset = TensorDataset(train_features_tensor, train_labels_tensor)
+    test_dataset = TensorDataset(test_features_tensor, test_labels_tensor)
+
+    # DataLoader for training and testing
+    train_loader = DataLoader(dataset=train_dataset, batch_size=train_batch_size, shuffle=True)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=test_batch_size, shuffle=False)
+
+    print('Breast Cancer Dataset loaded')
+
+    return train_loader, test_loader
 
 def load_from_dict(network, device, path, function=None):
     if '.th' in path:

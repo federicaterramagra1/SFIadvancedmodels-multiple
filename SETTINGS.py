@@ -6,6 +6,7 @@ import torch
 from dlModels.CIFAR10 import resnet_cifar10,mobilenetv2_cifar10, densenet_cifar10, vgg_cifar10, googlenet_cifar10
 from dlModels.GTSRB import resnet_GTSRB, vgg_GTSRB, densenet_GTSRB
 from dlModels.CIFAR100 import densenet_cifar100, resnet_cifar100, googlenet_cifar100
+from dlModels.BreastCancer import mlp
 
 '''
 FAULT_MODEL available: 'stuck-at_params', 'byzantine_neuron'
