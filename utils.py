@@ -200,6 +200,14 @@ def get_loader(network_name: str,
     that maximize this network accuracy. If not specified, images are selected at random
     :return: The DataLoader
     """
+    if network_name == 'SimpleMLP':
+        from dlModels.BreastCancer.mlp import SimpleMLP  # Assuming this import is correct
+
+        # Load Breast Cancer dataset with the correct parameters
+        train_loader, test_loader = load_breastCancer_datasets(train_batch_size=batch_size, test_batch_size=batch_size)
+
+        return train_loader, test_loader
+        
     if 'CIFAR10' == dataset_name:
         print('Loading CIFAR10 dataset')
         train_loader, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size,
@@ -217,7 +225,7 @@ def get_loader(network_name: str,
                                              test_image_per_class=image_per_class)
     elif dataset_name == 'BreastCancer':
         print('Loading BreastCancer dataset...')
-        train_loader, _, loader = load_BreastCancer_datasets(test_batch_size=batch_size,
+        train_loader, _, loader = load_breastCancer_datasets(test_batch_size=batch_size,
                                                              test_image_per_class=image_per_class)
 
     else:
@@ -584,7 +592,6 @@ def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=
     return train_loader, val_loader, test_loader
 
 def load_breastCancer_datasets(train_batch_size=32, test_batch_size=1, test_size=0.2):
-
     # Load the breast cancer dataset
     data = load_breast_cancer()
     features = data.data
