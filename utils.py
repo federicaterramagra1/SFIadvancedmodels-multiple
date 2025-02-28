@@ -17,6 +17,8 @@ from faultManager.FaultListManager import FLManager
 from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFault import WeightFault
 
+from dlModels.BreastCancer.mlp import SimpleMLP
+
 from torchvision.models import resnet
 from torchvision.models.densenet import _DenseBlock, _Transition
 from torchvision.models.efficientnet import Conv2dNormActivation
@@ -76,37 +78,113 @@ def clean_inference(network, loader, device, network_name):
         print(f"The final accuracy is: {accuracy}%")
         
         
-
 def get_network(network_name: str,
                 device: torch.device,
                 dataset_name: str,
                 root: str = '.') -> torch.nn.Module:
-    """
-    Load the network by using the name of the model and the dataset.
-    """
-    if dataset_name == 'BreastCancer':
+    
+    # Load the network by using the name of the mode and the dataset
+    
+    if dataset_name == 'CIFAR10':
+        print(f'Loading network {network_name} ...')   
+        if 'ResNet20' in network_name:
+            network = SETTINGS.resnet_cifar10.resnet20() 
+        elif 'ResNet32' in network_name:
+            network = SETTINGS.resnet_cifar10.resnet32()
+        elif 'ResNet44' in network_name:
+            network = SETTINGS.resnet_cifar10.resnet44()
+        elif 'DenseNet121' in network_name:
+            network = SETTINGS.densenet_cifar10.densenet121()
+        elif 'DenseNet161' in network_name:
+            network = SETTINGS.densenet_cifar10.densenet161()
+        elif 'GoogLeNet' in network_name:
+            network = SETTINGS.googlenet_cifar10.googlenet()
+        elif 'Vgg11_bn' in network_name:
+            network = SETTINGS.vgg_cifar10.vgg11_bn()
+        elif 'Vgg13_bn' in network_name:
+            network = SETTINGS.vgg_cifar10.vgg13_bn()
+        elif 'MobileNetV2' in network_name:
+            network = SETTINGS.mobilenetv2_cifar10.MobileNetV2() 
+            
+            network_path = SETTINGS.MODEL_PT_PATH
+            state_dict = torch.load(network_path, map_location=device)["net"]
+            function = None
+            if function is None:
+                clean_state_dict = {
+                    key.replace("module.", ""): value for key, value in state_dict.items()
+                }
+            else:
+                clean_state_dict = {
+                    key.replace("module.", ""): function(value)
+                    if not (("bn" in key) and ("weight" in key))
+                    else value
+                    for key, value in state_dict.items()
+                }
+            network.load_state_dict(clean_state_dict, strict=False)
+        else:
+            raise ValueError(f'Invalid network name {network}')
+
+        # Load the weights
+        if 'MobileNetV2' not in network_name:
+            if 'ResNet' in network_name:
+                network_path = SETTINGS.MODEL_TH_PATH
+            else:
+                network_path = SETTINGS.MODEL_PT_PATH
+        
+            load_from_dict(network=network,
+                            device=device,
+                            path=network_path)
+        
+    elif dataset_name == 'CIFAR100':
+        print(f'Loading network {network_name} ...')
+        if 'ResNet18' in network_name:
+            network = SETTINGS.resnet_cifar100.resnet18()
+        elif 'DesneNet121' in network_name:
+            network = SETTINGS.densenet_cifar100.densenet121()
+        elif 'GoogLeNet' in network_name:
+            network = SETTINGS.googlenet_cifar100.googlenet()
+        elif 'ResNext50' in network_name:
+            network = SETTINGS.resnext_cifar100.resnext50()
+        else:
+            raise ValueError(f'Invalid network name {network}')
+
+        # Load the weights
+        network_path = SETTINGS.MODEL_PTH_PATH
+        function = None
+        
+        state_dict = torch.load(network_path, map_location=device)['state_dict'] if '.th' in network_path else torch.load(network_path, map_location=device)
+        clean_state_dict = {key.replace('module.', ''): value for key, value in state_dict.items()} if function is None else {key.replace('module.', ''): function(value) if not (('bn' in key) and ('weight' in key)) else value for key, value in state_dict.items()}
+        network.load_state_dict(clean_state_dict, strict=False)
+
+    elif dataset_name == 'GTSRB':
+        print(f'Loading network {network_name} ...')
+        if 'ResNet20' in network_name:
+            network = SETTINGS.resnet_GTSRB.resnet20()
+        elif 'DenseNet121' in network_name:
+            network = SETTINGS.densenet_GTSRB.densenet121()
+        elif 'Vgg11_bn' in network_name:
+            network = SETTINGS.vgg_GTSRB.vgg11_bn()
+        else:
+            raise ValueError(f'Invalid network name {network}')
+        
+        network_path = SETTINGS.MODEL_PT_PATH
+        
+        load_from_dict(network=network,
+                        device=device,
+                        path=network_path)
+    elif dataset_name == 'BreastCancer':
         print(f'Loading network {network_name} for BreastCancer ...')
         if network_name == 'SimpleMLP':
-            network = SimpleMLP()  # Instantiate the SimpleMLP model
-
-            # Quantize the model (static 8-bit quantization)
-            network.quantize()
-
-            # Load the model's state_dict if a pretrained model is available
-            if hasattr(SETTINGS, 'MODEL_PT_PATH') and os.path.exists(SETTINGS.MODEL_PT_PATH):
-                state_dict = torch.load(SETTINGS.MODEL_PT_PATH, map_location=device)
-                network.load_state_dict(state_dict, strict=False)
-                print('Pretrained model loaded')
+            from dlModels.BreastCancer.mlp import SimpleMLP
+            network = SimpleMLP()
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
 
-        # Move the model to the appropriate device
-        network.to(device)
-        network.eval()
+    network.to(device)
+    network.eval()
+    
+    return network
 
-        return network
-    else:
-        raise ValueError(f"Unsupported dataset '{dataset_name}'")
 
 def get_loader(network_name: str,
                batch_size: int,
