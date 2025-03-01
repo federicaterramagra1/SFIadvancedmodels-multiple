@@ -38,8 +38,6 @@ class UnknownNetworkException(Exception):
 
 def clean_inference(network, loader, device, network_name):
     
-    
-
     clean_output_scores = list()
     clean_output_indices = list()
     clean_labels = list()
@@ -181,23 +179,16 @@ def get_network(network_name: str,
         if network_name == 'SimpleMLP':
             from dlModels.BreastCancer.mlp import SimpleMLP
             network = SimpleMLP()
+            # Convert to quantizable model
+            network = torch.quantization.QuantWrapper(network)
+            network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
+
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+        
+        # Move the model to the specified device
+        network.to(device)
 
-        # Move the model and its parameters to CPU before quantization
-        network.to('cpu')
-        for param in network.parameters():
-            param.data = param.data.to('cpu')
-
-        # Apply quantization if the model supports it
-        if hasattr(network, 'quantize'):
-            print("Applying 8-bit static quantization to the network...")
-            network.quantize()  # Quantize the model
-            print("Quantization completed. Model is now running on CPU.")
-        else:
-            print("The network does not support quantization. Skipping quantization.")
-    
-    network.to(device)
     network.eval()
     
     return network
@@ -217,6 +208,7 @@ def get_loader(network_name: str,
     that maximize this network accuracy. If not specified, images are selected at random
     :return: The DataLoader
     """
+
     if network_name == 'SimpleMLP':
         from dlModels.BreastCancer.mlp import SimpleMLP  # Assuming this import is correct
 
@@ -224,7 +216,7 @@ def get_loader(network_name: str,
         train_loader, test_loader = load_breastCancer_datasets(train_batch_size=batch_size, test_batch_size=batch_size)
 
         return train_loader, test_loader
-        
+            
     if 'CIFAR10' == dataset_name:
         print('Loading CIFAR10 dataset')
         train_loader, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size,
@@ -241,13 +233,8 @@ def get_loader(network_name: str,
     
                                              test_image_per_class=image_per_class)
     elif dataset_name == 'BreastCancer':
-        print('Loading BreastCancer dataset...')
-        train_loader, _, loader = load_breastCancer_datasets(test_batch_size=batch_size,
-                                                             test_image_per_class=image_per_class)
-
-    else:
-        print('no dataset specified')
-        exit()
+            print('Loading BreastCancer dataset...')
+            train_loader, test_loader = load_breastCancer_datasets(train_batch_size=batch_size, test_batch_size=batch_size)
 
 
     print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
