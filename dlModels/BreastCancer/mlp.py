@@ -27,7 +27,7 @@ class SimpleMLP(nn.Module):
         # For SimpleMLP, there are no layers to fuse, so this step is skipped.
 
         # Specify quantization configuration
-        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')  # For CPU (use 'qnnpack' for mobile)
+        self.qconfig = torch.quantization.get_default_qconfig('qnnpack')  # For CPU (use 'qnnpack' for mobile)
 
         # Prepare the model for static quantization
         torch.quantization.prepare(self, inplace=True)

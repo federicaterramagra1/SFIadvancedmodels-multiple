@@ -51,7 +51,7 @@ def main():
             print("Quantization completed. Model is now running on CPU.")
         else:
             print("The network does not support quantization. Skipping quantization.")
-            
+
         if SETTINGS.ONLY_CLEAN_INFERENCE:
             print('clean inference accuracy test:')
             clean_inference(network, loader, device, SETTINGS.NETWORK)
