@@ -39,6 +39,16 @@ def main():
         network = get_network(network_name=SETTINGS.NETWORK,
                             device=device,
                             dataset_name=SETTINGS.DATASET)
+
+        # Apply 8-bit static quantization to the network
+        if hasattr(network, 'quantize'):  # Check if the network has a quantize method
+            print("Applying 8-bit static quantization to the network...")
+            network.quantize()  # Quantize the model
+            device = 'cpu'  # Quantized models only support CPU
+            network.to(device)  # Move the quantized model to CPU
+            print("Quantization completed. Model is now running on CPU.")
+        else:
+            print("The network does not support quantization. Skipping quantization.")
         
         if SETTINGS.ONLY_CLEAN_INFERENCE:
             print('clean inference accuracy test:')
