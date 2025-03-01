@@ -32,9 +32,5 @@ class SimpleMLP(nn.Module):
         # Prepare the model for static quantization
         torch.quantization.prepare(self, inplace=True)
 
-        # Calibrate the model with dummy input
-        dummy_input = torch.randn(1, 30)  # Example input with shape (batch_size, input_features)
-        self(dummy_input)
-
         # Convert the model to a quantized version
         torch.quantization.convert(self, inplace=True)
