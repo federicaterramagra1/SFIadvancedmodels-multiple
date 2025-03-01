@@ -37,7 +37,9 @@ class UnknownNetworkException(Exception):
 
 
 def clean_inference(network, loader, device, network_name):
-       
+    
+    
+
     clean_output_scores = list()
     clean_output_indices = list()
     clean_labels = list()
@@ -55,7 +57,8 @@ def clean_inference(network, loader, device, network_name):
             data, label = batch
             dataset_size = dataset_size + len(label)
             data = data.to(device)
-            
+            data = data.to('cpu')  # Move data to CPU for quantized models
+
             network_output = network(data)
             prediction = torch.topk(network_output, k=1)
             scores = network_output.cpu()
@@ -181,6 +184,19 @@ def get_network(network_name: str,
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
 
+        # Move the model and its parameters to CPU before quantization
+        network.to('cpu')
+        for param in network.parameters():
+            param.data = param.data.to('cpu')
+
+        # Apply quantization if the model supports it
+        if hasattr(network, 'quantize'):
+            print("Applying 8-bit static quantization to the network...")
+            network.quantize()  # Quantize the model
+            print("Quantization completed. Model is now running on CPU.")
+        else:
+            print("The network does not support quantization. Skipping quantization.")
+    
     network.to(device)
     network.eval()
     

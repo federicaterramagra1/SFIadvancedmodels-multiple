@@ -46,7 +46,9 @@ def main():
         if hasattr(network, 'quantize'):  # Check if the network has a quantize method
             print("Applying 8-bit static quantization to the network...")
             network.quantize()  # Quantize the model
-            print("Quantization completed.")
+            device = 'cpu'  # Quantized models only support CPU
+            network.to(device)  # Move the quantized model to CPU
+            print("Quantization completed. Model is now running on CPU.")
         else:
             print("The network does not support quantization. Skipping quantization.")
         
