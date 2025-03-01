@@ -174,20 +174,22 @@ def get_network(network_name: str,
                         device=device,
                         path=network_path)
 
-    elif dataset_name == 'BreastCancer':
+    if dataset_name == 'BreastCancer':
         print(f'Loading network {network_name} for BreastCancer ...')
         if network_name == 'SimpleMLP':
             from dlModels.BreastCancer.mlp import SimpleMLP
             network = SimpleMLP()
-            # Convert to quantizable model
+            # Attach the quantize method to the network
+            network.quantize = network.quantize  # Explicitly attach the method
+            # Wrap the model for quantization
             network = torch.quantization.QuantWrapper(network)
             network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
-
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
         
         # Move the model to the specified device
         network.to(device)
+
 
     network.eval()
     
