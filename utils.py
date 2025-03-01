@@ -95,6 +95,8 @@ def get_network(network_name: str,
             # Wrap the model for quantization
             network = torch.quantization.QuantWrapper(network)
             network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
+            # Explicitly attach the quantize method to the wrapped model
+            network.quantize = network.module.quantize
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
         
@@ -104,7 +106,6 @@ def get_network(network_name: str,
     network.eval()
     
     return network
-
 
 def get_loader(network_name: str,
                batch_size: int,
