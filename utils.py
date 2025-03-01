@@ -37,7 +37,7 @@ class UnknownNetworkException(Exception):
 
 
 def clean_inference(network, loader, device, network_name):
-    
+       
     clean_output_scores = list()
     clean_output_indices = list()
     clean_labels = list()
@@ -55,8 +55,7 @@ def clean_inference(network, loader, device, network_name):
             data, label = batch
             dataset_size = dataset_size + len(label)
             data = data.to(device)
-            data = data.to('cpu')  # Move data to CPU for quantized models
-
+            
             network_output = network(data)
             prediction = torch.topk(network_output, k=1)
             scores = network_output.cpu()
@@ -78,6 +77,7 @@ def clean_inference(network, loader, device, network_name):
         print(f"The DNN wrong predicions are: {num_different_elements}")
         accuracy= (1 - num_different_elements/dataset_size)*100
         print(f"The final accuracy is: {accuracy}%")
+        
               
 def get_network(network_name: str,
                 device: torch.device,
@@ -595,7 +595,16 @@ def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=
 
     return train_loader, val_loader, test_loader
 
-def load_breastCancer_datasets(train_batch_size, test_batch_size):
+def load_breastCancer_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None):
+    """
+    Load the Breast Cancer dataset and split it into training, validation, and test sets.
+    
+    :param train_batch_size: Batch size for the training DataLoader.
+    :param train_split: Ratio of the training set to use for training (the rest is used for validation).
+    :param test_batch_size: Batch size for the test DataLoader.
+    :param test_image_per_class: Not used for Breast Cancer dataset (included for consistency with other datasets).
+    :return: Tuple of (train_loader, val_loader, test_loader).
+    """
     # Load the breast cancer dataset
     data = load_breast_cancer()
     X = data.data
@@ -610,14 +619,25 @@ def load_breastCancer_datasets(train_batch_size, test_batch_size):
     y_train = torch.tensor(y_train, dtype=torch.long)
     y_test = torch.tensor(y_test, dtype=torch.long)
 
-    # Create DataLoader objects
+    # Create datasets
     train_dataset = TensorDataset(X_train, y_train)
     test_dataset = TensorDataset(X_test, y_test)
 
-    train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False)
+    # Split the training set into training and validation
+    train_split_length = int(len(train_dataset) * train_split)
+    val_split_length = len(train_dataset) - train_split_length
+    train_subset, val_subset = torch.utils.data.random_split(train_dataset,
+                                                             lengths=[train_split_length, val_split_length],
+                                                             generator=torch.Generator().manual_seed(1234))
 
-    return train_loader, test_loader
+    # Create DataLoader objects
+    train_loader = DataLoader(dataset=train_subset, batch_size=train_batch_size, shuffle=True)
+    val_loader = DataLoader(dataset=val_subset, batch_size=train_batch_size, shuffle=True)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=test_batch_size, shuffle=False)
+
+    print('Breast Cancer Dataset loaded')
+
+    return train_loader, val_loader, test_loader
 
 def load_from_dict(network, device, path, function=None):
     if '.th' in path:
