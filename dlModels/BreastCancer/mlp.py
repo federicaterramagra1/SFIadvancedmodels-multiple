@@ -15,14 +15,18 @@ class SimpleMLP(nn.Module):
         return x
 
     def quantize(self):
-        """
-        Apply static 8-bit quantization to the model.
-        """
-        # Set the quantization configuration (8-bit static quantization)
-        self.qconfig = quantization.default_qconfig
+      """
+      Apply static 8-bit quantization to the model.
+      """
+      # Move the model to CPU (quantized models only support CPU)
+      self.to('cpu')
 
-        # Prepare the model for static quantization
-        quantization.prepare(self, inplace=True)
+      # Set the quantization configuration (8-bit static quantization)
+      self.qconfig = torch.quantization.default_qconfig
 
-        # Convert the model to a quantized version
-        quantization.convert(self, inplace=True)
+      # Prepare the model for static quantization by adding observers
+      torch.quantization.prepare(self, inplace=True)
+
+
+      # Convert the model to a quantized version
+      torch.quantization.convert(self, inplace=True)

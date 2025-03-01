@@ -37,7 +37,9 @@ class UnknownNetworkException(Exception):
 
 
 def clean_inference(network, loader, device, network_name):
-       
+    # Ensure the model is in evaluation mode
+    network.eval()
+
     clean_output_scores = list()
     clean_output_indices = list()
     clean_labels = list()
@@ -45,39 +47,39 @@ def clean_inference(network, loader, device, network_name):
     counter = 0
     with torch.no_grad():
         pbar = tqdm(loader,
-                colour='green',
-                desc=f'Clean Run',
-                ncols=shutil.get_terminal_size().columns)
+                    colour='green',
+                    desc=f'Clean Run',
+                    ncols=shutil.get_terminal_size().columns)
 
         dataset_size = 0
-        
+
         for batch_id, batch in enumerate(pbar):
             data, label = batch
             dataset_size = dataset_size + len(label)
-            data = data.to(device)
-            
+            data = data.to('cpu')  # Move data to CPU for quantized models
+
+            # Perform inference with the quantized model
             network_output = network(data)
             prediction = torch.topk(network_output, k=1)
             scores = network_output.cpu()
             indices = [int(fault) for fault in prediction.indices]
-            
+
             clean_output_scores.append(scores)
             clean_output_indices.append(indices)
             clean_labels.append(label)
-            
+
             counter = counter + 1
 
-
-        elementwise_comparison = [label != index for labels, indices in zip(clean_labels, clean_output_indices) for label, index in zip(labels, indices)]          
+        # Compare predictions with labels
+        elementwise_comparison = [label != index for labels, indices in zip(clean_labels, clean_output_indices) for label, index in zip(labels, indices)]
         # Count the number of different elements
         num_different_elements = elementwise_comparison.count(True)
-        
+
         print(f'device: {device}')
         print(f'network: {network_name}')
-        print(f"The DNN wrong predicions are: {num_different_elements}")
-        accuracy= (1 - num_different_elements/dataset_size)*100
-        print(f"The final accuracy is: {accuracy}%")
-        
+        print(f"The DNN wrong predictions are: {num_different_elements}")
+        accuracy = (1 - num_different_elements / dataset_size) * 100
+        print(f"The final accuracy is: {accuracy}%")  
         
 def get_network(network_name: str,
                 device: torch.device,
