@@ -41,13 +41,13 @@ def main():
         network = get_network(network_name=SETTINGS.NETWORK,
                             device=device,
                             dataset_name=SETTINGS.DATASET)
+        print(network)
         print("Does the network support quantization?", hasattr(network, 'quantize'))
 
        # Apply quantization if supported
         if hasattr(network, 'quantize') and callable(network.quantize):
             print("Applying 8-bit static quantization to the network...")
             network.quantize()  # Quantize the model
-            print(network)
 
             device = 'cpu'  # Quantized models only support CPU
             network.to(device)  # Move the quantized model to CPU
