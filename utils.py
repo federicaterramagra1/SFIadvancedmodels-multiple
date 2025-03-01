@@ -174,8 +174,8 @@ def get_network(network_name: str,
                         device=device,
                         path=network_path)
 
-     Load the network by using the name of the mode and the dataset
-    if dataset_name == 'BreastCancer':
+    # Load the network by using the name of the mode and the dataset
+    elif dataset_name == 'BreastCancer':
         print(f'Loading network {network_name} for BreastCancer ...')
         if network_name == 'SimpleMLP':
             from dlModels.BreastCancer.mlp import SimpleMLP
