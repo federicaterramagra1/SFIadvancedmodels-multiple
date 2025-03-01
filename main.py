@@ -11,6 +11,8 @@ from utils import get_network, get_device, get_loader, get_fault_list, clean_inf
 
 
 def main():
+  
+  torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if you're on an x86 CPU
 
     if SETTINGS.FAULT_LIST_GENERATION:
         
