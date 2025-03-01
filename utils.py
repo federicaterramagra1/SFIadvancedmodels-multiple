@@ -11,7 +11,7 @@ import SETTINGS
 import torch
 from torch.nn import Sequential, Module
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 from faultManager.FaultListManager import FLManager
 from faultManager.NeuronFault import NeuronFault
@@ -28,8 +28,9 @@ from torchvision.transforms.v2 import ToTensor,Resize,Compose,ColorJitter,Random
 
 import csv
 from tqdm import tqdm
-from sklearn.datasets import load_breast_cancer
 
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
 
 class UnknownNetworkException(Exception):
     pass
@@ -591,30 +592,27 @@ def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=
 
     return train_loader, val_loader, test_loader
 
-def load_breastCancer_datasets(train_batch_size=32, test_batch_size=1, test_size=0.2):
+def load_breastCancer_datasets(train_batch_size, test_batch_size):
     # Load the breast cancer dataset
     data = load_breast_cancer()
-    features = data.data
-    labels = data.target
+    X = data.data
+    y = data.target
 
-    # Split into training and testing datasets
-    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=test_size, random_state=42)
+    # Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Convert to tensors
-    train_features_tensor = torch.tensor(X_train, dtype=torch.float32)
-    train_labels_tensor = torch.tensor(y_train, dtype=torch.long)
-    test_features_tensor = torch.tensor(X_test, dtype=torch.float32)
-    test_labels_tensor = torch.tensor(y_test, dtype=torch.long)
+    # Convert to PyTorch tensors
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    y_test = torch.tensor(y_test, dtype=torch.long)
 
-    # Create TensorDataset
-    train_dataset = TensorDataset(train_features_tensor, train_labels_tensor)
-    test_dataset = TensorDataset(test_features_tensor, test_labels_tensor)
+    # Create DataLoader objects
+    train_dataset = TensorDataset(X_train, y_train)
+    test_dataset = TensorDataset(X_test, y_test)
 
-    # DataLoader for training and testing
-    train_loader = DataLoader(dataset=train_dataset, batch_size=train_batch_size, shuffle=True)
-    test_loader = DataLoader(dataset=test_dataset, batch_size=test_batch_size, shuffle=False)
-
-    print('Breast Cancer Dataset loaded')
+    train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False)
 
     return train_loader, test_loader
 
