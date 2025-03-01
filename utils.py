@@ -210,12 +210,13 @@ def get_loader(network_name: str,
     """
 
     if network_name == 'SimpleMLP':
-        from dlModels.BreastCancer.mlp import SimpleMLP  # Assuming this import is correct
-
         # Load Breast Cancer dataset with the correct parameters
-        train_loader, test_loader = load_breastCancer_datasets(train_batch_size=batch_size, test_batch_size=batch_size)
+        train_loader, val_loader, test_loader = load_breastCancer_datasets(
+            train_batch_size=batch_size,
+            test_batch_size=batch_size
+        )
+        return train_loader, test_loader  # Return only train and test loaders
 
-        return train_loader, test_loader
             
     if 'CIFAR10' == dataset_name:
         print('Loading CIFAR10 dataset')
@@ -233,8 +234,11 @@ def get_loader(network_name: str,
     
                                              test_image_per_class=image_per_class)
     elif dataset_name == 'BreastCancer':
-            print('Loading BreastCancer dataset...')
-            train_loader, test_loader = load_breastCancer_datasets(train_batch_size=batch_size, test_batch_size=batch_size)
+        print('Loading BreastCancer dataset...')
+        train_loader, val_loader, test_loader = load_breastCancer_datasets(
+            train_batch_size=batch_size,
+            test_batch_size=batch_size
+        )
 
 
     print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
