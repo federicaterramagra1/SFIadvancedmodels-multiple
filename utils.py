@@ -906,125 +906,54 @@ import os
 import SETTINGS
 
 def fault_list_gen():
-    # Imposta un seed per la riproducibilità
+    # Set a seed for reproducibility
     random_seed = SETTINGS.SEED
+    random.seed(random_seed)
 
     PRINT = True
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    # Load the network
     network = get_network(network_name=SETTINGS.NETWORK_NAME,
                           device=device,
                           dataset_name=SETTINGS.DATASET_NAME)
     network.to(device)
 
-    # Crea una lista delle dimensioni dei layer e dei parametri
+    # Check if the model is quantized
+    is_quantized = hasattr(network, 'quantize') and isinstance(network, torch.quantization.QuantWrapper)
+
+    # Set the bit-width based on whether the model is quantized
+    bit_width = 8 if is_quantized else 32  # 8 bits for quantized models, 32 bits for floating-point models
+
+    # Create a list of layer dimensions and parameters
     layer_params_list = [(name, param.numel()) for name, param in network.named_parameters() if len(param.size()) >= 2]
     layer_dimensions_list = [(name, np.array(param.size())) for name, param in network.named_parameters() if len(param.size()) >= 2]
 
     total_params = sum(param.numel() for _, param in network.named_parameters() if len(param.size()) >= 2)
     print(f"Total parameters: {total_params}")
 
+    # Calculate the total number of bits in the model
+    total_bits = total_params * bit_width
+    print(f"Total bits in the model: {total_bits}")
+
+    # Calculate the number of faults to inject
     p = SETTINGS.probability
     e = SETTINGS.error_margin
     t = SETTINGS.confidence_constant
-    N = total_params * SETTINGS.bit * 2
+    N = total_bits * 2  # Total bits * 2 (for bit flips)
 
     faults_to_inject = round(N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p))))
     print(f"Faults to inject: {faults_to_inject}")
 
-    faults_to_inject_list = [(layer_name, round((params * faults_to_inject) / total_params)) for layer_name, params in layer_params_list]
+    # Distribute faults across layers
+    faults_to_inject_list = [(layer_name, round((params * bit_width * faults_to_inject) / total_bits)) for layer_name, params in layer_params_list]
 
+    # Generate the fault list CSV
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
     csv_filename = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
-    header = ['Injection', 'Layer', 'TensorIndex1', 'Bit1', 'TensorIndex2', 'Bit2']
-
-    # Creazione del file CSV per gli errori
-    with open(csv_filename, 'w', newline='') as csv_file:
-        csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(header)
-
-        used_indices = set()
-        row_number = 0
-        max_attempts = 1000
-
-        for layer_name, num_faults in faults_to_inject_list:
-            layer_dimensions = next(d for name, d in layer_dimensions_list if name == layer_name)
-
-            for _ in range(num_faults):
-                attempts = 0
-                while attempts < max_attempts:
-                    if len(layer_dimensions) == 4:
-                        index1 = tuple(random.randint(0, dim - 1) for dim in layer_dimensions)
-                        index2 = tuple(random.randint(0, dim - 1) for dim in layer_dimensions)
-                    elif len(layer_dimensions) == 3:
-                        index1 = tuple(random.randint(0, dim - 1) for dim in layer_dimensions)
-                        index2 = tuple(random.randint(0, dim - 1) for dim in layer_dimensions)
-                    elif len(layer_dimensions) == 2:
-                        # Correzione per i layer 2D
-                        index1 = tuple((random.randint(0, layer_dimensions[0] - 1), random.randint(0, layer_dimensions[1] - 1)))
-                        index2 = tuple((random.randint(0, layer_dimensions[0] - 1), random.randint(0, layer_dimensions[1] - 1)))
-
-                    bit1 = random.randint(0, 31)
-                    bit2 = random.randint(0, 31)
-
-                    # Evitare duplicati
-                    fault_key = (layer_name, index1, bit1, index2, bit2)
-                    if fault_key not in used_indices:
-                        used_indices.add(fault_key)
-                        break
-                    attempts += 1
-
-                if attempts == max_attempts:
-                    print(f"Could not generate unique fault for {layer_name}.")
-                    continue
-
-                csv_writer.writerow([row_number, layer_name, index1, bit1, index2, bit2])
-                row_number += 1
-
-    print(f"CSV file '{csv_filename}' created with {row_number} rows.")
-
-    # Lista dei layer e dei parametri totali
-    if PRINT:
-        print("\nList of Layer Names and Total Parameters:")
-    for layer_name, layer_param in layer_params_list:
-        if PRINT:
-            print(f"Layer: {layer_name}, Total Parameters: {layer_param}")
-        
-    total_params = sum(param[1] for param in layer_params_list)
-    print(f"Total params: {total_params}")
-
-    # Ricalcola i guasti da iniettare
-    fault_to_inject = round(N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p))))
-
-    print(f"Faults to inject: {fault_to_inject}")
-
-    faults_to_inject_list = []
-    for layer_name, total_params in layer_params_list:
-        faults_to_inject = round((total_params * fault_to_inject) / total_params)
-        faults_to_inject_list.append((layer_name, faults_to_inject))
-
-    # Mostra la lista dei guasti da iniettare
-    print("\nList of Faults to Inject for Each Layer:")
-    for layer_name, faults_to_inject in faults_to_inject_list:
-        if PRINT:
-            print(f"Layer: {layer_name}, Faults to Inject: {faults_to_inject}")
-        
-    # Creazione delle dimensioni dei layer
-    layer_dimensions_list = [(name, np.array(param.size())) for name, param in network.named_parameters() if len(param.size()) >= 2]
-
-    # Mostra le dimensioni dei layer
-    print("\nList of Layer Names and Dimensions:")
-    for layer_name, dimensions in layer_dimensions_list:
-        if PRINT:
-            print(f"Layer: {layer_name}, Dimensions: {dimensions}")
-
-    # Generazione finale del file CSV
-    random.seed(random_seed)
-
-    os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
-    csv_filename = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
     header = ['Injection', 'Layer', 'TensorIndex', 'Bit']
     counter = 0
+
     with open(csv_filename, 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(header)
@@ -1054,9 +983,9 @@ def fault_list_gen():
                         width_index = random.randint(0, layer_dimensions[1] - 1)
                         tensor_index = f'({height_index}, {width_index})'
 
-                    bit_flip = random.randint(0, 31)
-                    
-                    # Verifica se il nome del layer e gli indici sono già stati usati
+                    bit_flip = random.randint(0, bit_width - 1)  # Bit flip within the bit-width of the model
+
+                    # Check if the combination is unique
                     layer_name_no_weight = layer_name.replace('.weight', '')
                     index_key = (layer_name_no_weight, tensor_index, bit_flip)
                     if index_key not in used_indices:
