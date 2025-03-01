@@ -23,8 +23,8 @@ class SimpleMLP(nn.Module):
         """
         Apply static quantization to the model.
         """
-        # Fuse layers for quantization
-        torch.quantization.fuse_modules(self, [['fc1', 'fc2']], inplace=True)
+        # Fuse layers for quantization (if applicable)
+        # For SimpleMLP, there are no layers to fuse, so this step is skipped.
 
         # Specify quantization configuration
         self.qconfig = torch.quantization.get_default_qconfig('fbgemm')  # For CPU (use 'qnnpack' for mobile)
