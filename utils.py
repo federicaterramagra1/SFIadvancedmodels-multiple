@@ -56,7 +56,6 @@ def clean_inference(network, loader, device, network_name):
             dataset_size = dataset_size + len(label)
             data = data.to(device)
             
-            network.quantize()
             network_output = network(data)
             prediction = torch.topk(network_output, k=1)
             scores = network_output.cpu()
@@ -173,6 +172,7 @@ def get_network(network_name: str,
         load_from_dict(network=network,
                         device=device,
                         path=network_path)
+
     elif dataset_name == 'BreastCancer':
         print(f'Loading network {network_name} for BreastCancer ...')
         if network_name == 'SimpleMLP':

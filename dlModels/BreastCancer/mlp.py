@@ -18,8 +18,6 @@ class SimpleMLP(nn.Module):
         """
         Apply static 8-bit quantization to the model.
         """
-        # Move the model to CPU (quantized models only support CPU)
-        self.to('cpu')
 
         # Set the quantization configuration (8-bit static quantization)
         self.qconfig = torch.quantization.default_qconfig
@@ -27,12 +25,6 @@ class SimpleMLP(nn.Module):
         # Prepare the model for static quantization by adding observers
         torch.quantization.prepare(self, inplace=True)
 
-        # Calibrate the model with a representative dataset
-        # Replace this with your actual calibration dataset
-        with torch.no_grad():
-            for _ in range(100):  # Use 100 batches for calibration
-                dummy_input = torch.randn(1, 30)  # Example input (batch size: 1, input size: 30)
-                self(dummy_input)
-
+  
         # Convert the model to a quantized version
         torch.quantization.convert(self, inplace=True)
