@@ -20,10 +20,13 @@ DATASET available: 'BreastCancer'
 
 
 '''
-# SETTINGS.py
-# faults to inject
-FAULTS_TO_INJECT = 2  # 1 /2 / 3
 
+# network and dataset to use
+DATASET_NAME = 'BreastCancer'
+NETWORK_NAME = 'SimpleMLP'
+
+# if you want to check  only the accuracy of the clean model
+ONLY_CLEAN_INFERENCE = True
 
 # enable the fault list generation
 FAULT_LIST_GENERATION = True
@@ -34,10 +37,6 @@ FAULTS_INJECTION = False
 # 0 : masked, 1: non.critic, 2: critic
 FI_ANALYSIS = False
 FI_ANALYSIS_SUMMARY = True
-
-# network and dataset to use
-DATASET_NAME = 'BreastCancer'
-NETWORK_NAME = 'SimpleMLP'
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = True

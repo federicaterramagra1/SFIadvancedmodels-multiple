@@ -28,17 +28,18 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
+                 num_faults_to_inject: int = 2,
                  injectable_modules: List[Union[Module, List[Module]]] = None):
         self.network = network
         self.network_name = network_name
         self.loader = loader
         self.device = device
+        self.num_faults_to_inject = num_faults_to_inject
 
         self.clean_output = clean_output
         self.faulty_output = list()
 
         # Read the number of faults to inject from SETTINGS
-        self.num_faults_to_inject = SETTINGS.FAULTS_TO_INJECT  # Use FAULTS_TO_INJECT
         print(f"Number of faults to inject: {self.num_faults_to_inject}")  # Debugging
 
         # Other initializations remain the same
