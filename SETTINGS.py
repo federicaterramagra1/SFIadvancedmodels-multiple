@@ -52,7 +52,7 @@ SEED = 38
 error_margin = 0.01
 probability = 0.5
 confidence_constant = 2.58
-bit = 32
+bit = 8
 
 modules_to_fault = (torch.nn.Conv2d, torch.nn.Linear)
 
