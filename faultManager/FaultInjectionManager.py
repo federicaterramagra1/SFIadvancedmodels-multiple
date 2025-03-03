@@ -18,8 +18,7 @@ from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
 
 from typing import List, Union
-import itertools
-
+import itertools  # Add this import
 
 class FaultInjectionManager:
     def __init__(self,
@@ -28,18 +27,17 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
-                 num_faults_to_inject: int = 2,
-                 injectable_modules: List[Union[Module, List[Module]]] = None):
+                 injectable_modules: List[Union[Module, List[Module]]] = None,
+                 num_faults_to_inject: int = 2):  # Add num_faults_to_inject parameter
         self.network = network
         self.network_name = network_name
         self.loader = loader
         self.device = device
-        self.num_faults_to_inject = num_faults_to_inject
 
         self.clean_output = clean_output
         self.faulty_output = list()
 
-        # Read the number of faults to inject from SETTINGS
+        self.num_faults_to_inject = num_faults_to_inject  # Number of faults to inject
         print(f"Number of faults to inject: {self.num_faults_to_inject}")  # Debugging
 
         # Other initializations remain the same

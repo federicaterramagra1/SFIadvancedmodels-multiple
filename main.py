@@ -98,13 +98,15 @@ def main():
                                                         fault_list_generator=fault_list_generator)
 
         # Execute the fault injection campaign with the smart network
-        fault_injection_executor = FaultInjectionManager(network=network,
-                                                        network_name=SETTINGS.NETWORK,
-                                                        device=device,
-                                                        loader=loader,
-                                                        clean_output=clean_ofm_manager.clean_output,
-                                                        injectable_modules=injectable_modules)
-        
+        fault_injection_executor = FaultInjectionManager(
+                                                            network=network,
+                                                            network_name=SETTINGS.NETWORK,
+                                                            device=device,
+                                                            loader=loader,
+                                                            clean_output=clean_ofm_manager.clean_output,
+                                                            injectable_modules=injectable_modules,
+                                                            num_faults_to_inject=SETTINGS.NUM_FAULTS_TO_INJECT  # Pass the number of faults to inject
+                                                        )
         fault_injection_executor.run_faulty_campaign_on_weight(fault_model=SETTINGS.FAULT_MODEL,
                                                             fault_list=fault_list,
                                                             first_batch_only=False,

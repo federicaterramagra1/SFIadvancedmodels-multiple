@@ -11,24 +11,25 @@ class WeightFaultInjector:
 
         self.golden_value = None
 
-    def __inject_fault(self, layer_name, tensor_index, bit, value=None):
-        self.layer_name = layer_name
-        self.tensor_index = tensor_index
-        self.bit = bit
+    def inject_faults(self, faults: list, fault_mode='stuck-at'):
+        """
+        Inject multiple faults into the network.
+        :param faults: List of faults to inject.
+        :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
+        """
+        for fault in faults:
+            self.inject_fault(fault, fault_mode)
 
-        # Get the golden value as an 8-bit integer
-        self.golden_value = int(self.network.state_dict()[self.layer_name][self.tensor_index])
-
-        # If the value is not set, then we are doing a bit-flip
-        if value is None:
-            faulty_value = self.__int8_bit_flip()
+    def inject_fault(self, fault, fault_mode='stuck-at'):
+        """
+        Inject a single fault into the network.
+        """
+        if fault_mode == 'stuck-at':
+            self.inject_stuck_at(fault.layer_name, fault.tensor_index, fault.bit, fault.value)
+        elif fault_mode == 'bit-flip':
+            self.inject_bit_flip(fault.layer_name, fault.tensor_index, fault.bit)
         else:
-            faulty_value = self.__int8_stuck_at(value)
-
-        self.faulty_value = faulty_value
-
-        # Update the weight with the faulty value
-        self.network.state_dict()[self.layer_name][self.tensor_index] = faulty_value
+            raise ValueError(f'Invalid fault mode {fault_mode}')
 
     def __int8_bit_flip(self):
         """

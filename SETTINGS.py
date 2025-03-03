@@ -25,14 +25,17 @@ DATASET available: 'BreastCancer'
 DATASET_NAME = 'BreastCancer'
 NETWORK_NAME = 'SimpleMLP'
 
+# Fault injection settings
+NUM_FAULTS_TO_INJECT = 2  # Number of faults to inject simultaneously
+
 # if you want to check  only the accuracy of the clean model
-ONLY_CLEAN_INFERENCE = True
+ONLY_CLEAN_INFERENCE = False
 
 # enable the fault list generation
 FAULT_LIST_GENERATION = True
 
 # enable the fault injection
-FAULTS_INJECTION = False
+FAULTS_INJECTION = True
 
 # 0 : masked, 1: non.critic, 2: critic
 FI_ANALYSIS = False
