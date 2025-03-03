@@ -41,8 +41,6 @@ FAULTS_INJECTION = True
 FI_ANALYSIS = False
 FI_ANALYSIS_SUMMARY = True
 
-# if you want to check  only the accuracy of the clean model
-ONLY_CLEAN_INFERENCE = True
 # ------------------------------------ FAULT LIST SETTINGS ------------------------------------
 
 

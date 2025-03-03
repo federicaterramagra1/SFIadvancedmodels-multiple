@@ -39,7 +39,7 @@ class FaultInjectionManager:
 
         self.num_faults_to_inject = num_faults_to_inject  # Number of faults to inject
         print(f"Number of faults to inject: {self.num_faults_to_inject}")  # Debugging
-
+        
         # Other initializations remain the same
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
         self.__faulty_output_folder = SETTINGS.FAULTY_OUTPUT_FOLDER

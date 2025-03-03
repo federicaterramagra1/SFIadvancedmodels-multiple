@@ -35,7 +35,7 @@ def main():
                             dataset_name=SETTINGS.DATASET)
 
         # Debugging: Print the network and check if it supports quantization
-        print(network)
+        #print(network)
         print(f"Does the network support quantization? {hasattr(network, 'quantize') and callable(network.quantize)}")
 
         # Apply quantization if supported
