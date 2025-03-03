@@ -23,14 +23,21 @@ class SimpleMLP(nn.Module):
         """
         Apply static quantization to the model.
         """
+        # Move the model to the CPU
+        self.to('cpu')
+
         # Fuse layers for quantization (if applicable)
         # For SimpleMLP, there are no layers to fuse, so this step is skipped.
 
         # Specify quantization configuration
-        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')  # For CPU (use 'qnnpack' for mobile)
+        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')  # Use 'fbgemm' for x86 CPUs
 
         # Prepare the model for static quantization
         torch.quantization.prepare(self, inplace=True)
+
+        # Calibrate the model with dummy input (ensure it's on the CPU)
+        dummy_input = torch.randn(1, 30, device='cpu')  # Example input with shape (batch_size, input_features)
+        self(dummy_input)
 
         # Convert the model to a quantized version
         torch.quantization.convert(self, inplace=True)

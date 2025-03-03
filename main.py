@@ -31,7 +31,7 @@ def main():
                             use_cuda1=SETTINGS.USE_CUDA_1)
         
         print(f'Using device {device}')
-         
+        
         # Load the dataset
         _, loader = get_loader(network_name=SETTINGS.NETWORK,
                             batch_size=SETTINGS.BATCH_SIZE,
@@ -41,19 +41,22 @@ def main():
         network = get_network(network_name=SETTINGS.NETWORK,
                             device=device,
                             dataset_name=SETTINGS.DATASET)
-        print(network)
-        print("Does the network support quantization?", hasattr(network, 'quantize'))
 
-       # Apply quantization if supported
+        # Debugging: Print the network and check if it supports quantization
+        print(network)
+        print(f"Does the network support quantization? {hasattr(network, 'quantize') and callable(network.quantize)}")
+
+        # Apply quantization if supported
         if hasattr(network, 'quantize') and callable(network.quantize):
             print("Applying 8-bit static quantization to the network...")
+            # Move the model to the CPU before quantization
+            device = 'cpu'
+            network.to(device)
             network.quantize()  # Quantize the model
-
-            device = 'cpu'  # Quantized models only support CPU
-            network.to(device)  # Move the quantized model to CPU
             print("Quantization completed. Model is now running on CPU.")
         else:
             print("The network does not support quantization. Skipping quantization.")
+            
         if SETTINGS.ONLY_CLEAN_INFERENCE:
             print('clean inference accuracy test:')
             clean_inference(network, loader, device, SETTINGS.NETWORK)
