@@ -5,21 +5,15 @@ import SETTINGS
 from faultManager.FaultListManager import FLManager
 from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
-from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition,  \
-                  get_fault_list, clean_inference, output_definition,  fault_list_gen, csv_summary
-   
+from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition, fault_list_gen, csv_summary
 
 
 def main():
-  
     torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if you're on an x86 CPU
 
     if SETTINGS.FAULT_LIST_GENERATION:
-        
         fault_list_gen()
-        
     else:
-        
         print('Fault list generation is disabled')
     
     if SETTINGS.FAULTS_INJECTION or SETTINGS.ONLY_CLEAN_INFERENCE:
@@ -27,9 +21,7 @@ def main():
         torch.use_deterministic_algorithms(mode=True)
 
         # Select the device
-        device = get_device(use_cuda0=SETTINGS.USE_CUDA_0,
-                            use_cuda1=SETTINGS.USE_CUDA_1)
-        
+        device = get_device(use_cuda0=SETTINGS.USE_CUDA_0, use_cuda1=SETTINGS.USE_CUDA_1)
         print(f'Using device {device}')
         
         # Load the dataset
@@ -58,11 +50,11 @@ def main():
             print("The network does not support quantization. Skipping quantization.")
             
         if SETTINGS.ONLY_CLEAN_INFERENCE:
-            print('clean inference accuracy test:')
+            print('Clean inference accuracy test:')
             clean_inference(network, loader, device, SETTINGS.NETWORK)
             exit(-1)
         
-        print('clean inference accuracy test:')
+        print('Clean inference accuracy test:')
         clean_inference(network, loader, device, SETTINGS.NETWORK)
 
         # Folder containing the feature maps
@@ -75,13 +67,12 @@ def main():
         # Folder containing the clean output
         clean_output_folder = SETTINGS.CLEAN_OUTPUT_FOLDER
 
-        #attenzione a module_classes che mi salva ofm diverse!
+        # Feature maps layer names
         module_classes = SETTINGS.MODULE_CLASSES
-        
         feature_maps_layer_names = [name.replace('.weight', '') for name, module in network.named_modules()
                                             if isinstance(module, module_classes)]
         
-        print('feature maps layer names:')
+        print('Feature maps layer names:')
         print(feature_maps_layer_names)
     
         clean_ofm_manager = OutputFeatureMapsManager(network=network,
@@ -101,10 +92,6 @@ def main():
                                                 module_class=SETTINGS.MODULE_CLASSES_FAULT_LIST,
                                                 input_size=loader.dataset[0][0].unsqueeze(0).shape,
                                                 save_ifm=True)
-
-        # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-        # smart_network = copy.deepcopy(network)
-        # fault_list_generator.update_network(network)
 
         # Manage the fault models
         fault_list, injectable_modules = get_fault_list(fault_model=SETTINGS.FAULT_MODEL,
@@ -126,7 +113,6 @@ def main():
                                                             save_ofm=SETTINGS.SAVE_FAULTY_OFM,
                                                             ofm_folder=faulty_fm_folder)
         
-        
     else:
         print('Fault injection is disabled')
         
@@ -142,22 +128,14 @@ def main():
             output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
             print('Done')
             
-       
-        
-        
     else:
         print('Fault injection analysis is disabled')
     
     if SETTINGS.FI_ANALYSIS_SUMMARY:
-        print('Generating csv summary')
+        print('Generating CSV summary')
         csv_summary()
-        print('csv summary generated')
-        
-
+        print('CSV summary generated')
 
 
 if __name__ == '__main__':
     main()
-# Dummy change to test commit
-
-# Dummy change to test commit
