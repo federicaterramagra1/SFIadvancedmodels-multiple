@@ -20,7 +20,6 @@ from faultManager.WeightFaultInjector import WeightFaultInjector
 from typing import List, Union
 
 import itertools  # Add this import
-
 class FaultInjectionManager:
     def __init__(self,
                  network: Module,
@@ -28,8 +27,7 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
-                 injectable_modules: List[Union[Module, List[Module]]] = None,
-                 ):  
+                 injectable_modules: List[Union[Module, List[Module]]] = None):
         self.network = network
         self.network_name = network_name
         self.loader = loader
@@ -38,7 +36,9 @@ class FaultInjectionManager:
         self.clean_output = clean_output
         self.faulty_output = list()
 
-        self.num_faults_to_inject = SETTINGS.FAULTS_TO_INJECT  # Number of faults to inject
+        # Read the number of faults to inject from SETTINGS
+        self.num_faults_to_inject = SETTINGS.FAULTS_TO_INJECT  # Use FAULTS_TO_INJECT
+        print(f"Number of faults to inject: {self.num_faults_to_inject}")  # Debugging
 
         # Other initializations remain the same
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
@@ -74,6 +74,7 @@ class FaultInjectionManager:
 
             # Generate combinations of faults based on num_faults_to_inject
             fault_combinations = list(itertools.combinations(fault_list, self.num_faults_to_inject))
+            print(f"Number of fault combinations: {len(fault_combinations)}")  # Debugging
 
             start_time = time.time()
 
