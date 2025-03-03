@@ -38,7 +38,7 @@ class FaultInjectionManager:
         self.clean_output = clean_output
         self.faulty_output = list()
 
-        self.num_faults_to_inject = SETTINGS.NUM_FAULTS_TO_INJECT  # Number of faults to inject
+        self.num_faults_to_inject = SETTINGS.FAULTS_TO_INJECT  # Number of faults to inject
 
         # Other initializations remain the same
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
