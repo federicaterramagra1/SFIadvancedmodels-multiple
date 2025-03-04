@@ -1,5 +1,5 @@
 import struct
-
+import torch
 
 class WeightFaultInjector:
     def __init__(self, network):
@@ -75,7 +75,7 @@ class WeightFaultInjector:
             print('CRITICAL ERROR: impossible to restore the golden value before setting a fault')
             quit()
 
-            
+
     def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
         """
         Inject a bit-flip in the specified layer at the tensor_index position for the specified bit.
