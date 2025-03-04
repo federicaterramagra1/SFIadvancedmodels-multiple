@@ -46,6 +46,7 @@ def main():
             network.to(device)
             network.quantize()  # Quantize the model
             print("Quantization completed. Model is now running on CPU.")
+            print("Quantized model state dict keys:", network.state_dict().keys())
         else:
             print("The network does not support quantization. Skipping quantization.")
             
@@ -56,6 +57,8 @@ def main():
         
         print('Clean inference accuracy test:')
         clean_inference(network, loader, device, SETTINGS.NETWORK)
+
+        print("Quantized model state dict keys:", network.state_dict().keys())
 
         # Folder containing the feature maps
         clean_fm_folder = SETTINGS.CLEAN_FM_FOLDER

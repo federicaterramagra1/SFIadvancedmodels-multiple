@@ -43,7 +43,8 @@ class WeightFaultInjector:
         """
         with torch.no_grad():
             for fault in faults:
-                layer = getattr(self.network, fault.layer_name)
+                # Access the layer through the `module` attribute of the QuantWrapper
+                layer = getattr(self.network.module, fault.layer_name)
                 weight_tensor = layer.weight.data.view(torch.uint8)
                 # Flip the specified bit
                 weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] ^ (1 << fault.bit)
