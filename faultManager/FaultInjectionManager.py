@@ -61,7 +61,7 @@ class FaultInjectionManager:
             self.network(data)
 
 
-        def run_faulty_campaign_on_weight(self,
+    def run_faulty_campaign_on_weight(self,
                                   fault_model: str,
                                   fault_list: list,
                                   first_batch_only: bool = False,
