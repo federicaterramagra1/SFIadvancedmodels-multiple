@@ -10,6 +10,8 @@ class WeightFaultInjector:
         self.bit = None
 
         self.golden_value = None
+        for name, layer in self.network.module.named_modules():
+          print(f"Layer name: {name}")
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         """
