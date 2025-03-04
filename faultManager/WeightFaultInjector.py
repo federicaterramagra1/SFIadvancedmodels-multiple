@@ -38,38 +38,38 @@ class WeightFaultInjector:
         else:
             raise ValueError(f'Invalid fault mode {fault_mode}')
 
- def __int8_bit_flip(self, faults):
-    """
-    Inject multiple bit-flip faults into the weights of the network.
-    :param faults: List of faults to inject.
-    """
-    with torch.no_grad():
-        for fault in faults:
-            # Access the layer through the `module` attribute of the QuantWrapper
-            layer = getattr(self.network.module, fault.layer_name)
-            weight_tensor = layer.weight.data.view(torch.uint8)
-            # Flip the specified bit
-            weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] ^ (1 << fault.bit)
-            # Convert back to the original dtype
-            layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
+    def __int8_bit_flip(self, faults):
+        """
+        Inject multiple bit-flip faults into the weights of the network.
+        :param faults: List of faults to inject.
+        """
+        with torch.no_grad():
+            for fault in faults:
+                # Access the layer through the `module` attribute of the QuantWrapper
+                layer = getattr(self.network.module, fault.layer_name)
+                weight_tensor = layer.weight.data.view(torch.uint8)
+                # Flip the specified bit
+                weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] ^ (1 << fault.bit)
+                # Convert back to the original dtype
+                layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
 
-def __int8_stuck_at(self, faults):
-    """
-    Inject multiple stuck-at faults into the weights of the network.
-    :param faults: List of faults to inject.
-    """
-    with torch.no_grad():
-        for fault in faults:
-            # Access the layer through the `module` attribute of the QuantWrapper
-            layer = getattr(self.network.module, fault.layer_name)
-            weight_tensor = layer.weight.data.view(torch.uint8)
-            # Set the bit to the specified value
-            if fault.value == 1:
-                weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] | (1 << fault.bit)
-            else:
-                weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] & ~(1 << fault.bit)
-            # Convert back to the original dtype
-            layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
+    def __int8_stuck_at(self, faults):
+        """
+        Inject multiple stuck-at faults into the weights of the network.
+        :param faults: List of faults to inject.
+        """
+        with torch.no_grad():
+            for fault in faults:
+                # Access the layer through the `module` attribute of the QuantWrapper
+                layer = getattr(self.network.module, fault.layer_name)
+                weight_tensor = layer.weight.data.view(torch.uint8)
+                # Set the bit to the specified value
+                if fault.value == 1:
+                    weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] | (1 << fault.bit)
+                else:
+                    weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] & ~(1 << fault.bit)
+                # Convert back to the original dtype
+                layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
     def restore_golden(self):
         """
         Restore the value of the faulted network weight to its golden value.
