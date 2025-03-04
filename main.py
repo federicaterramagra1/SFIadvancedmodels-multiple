@@ -107,13 +107,13 @@ def main():
                                                             injectable_modules=injectable_modules,
                                                             num_faults_to_inject=SETTINGS.NUM_FAULTS_TO_INJECT  # Pass the number of faults to inject
                                                         )
-        fault_injection_executor.run_faulty_campaign_on_weight(fault_model=SETTINGS.FAULT_MODEL,
+        fault_injection_executor.run_faulty_campaign_on_weight(
+                                                            fault_model=SETTINGS.FAULT_MODEL,
                                                             fault_list=fault_list,
-                                                            first_batch_only=False,
-                                                            force_n=SETTINGS.FAULTS_TO_INJECT,
                                                             save_output=SETTINGS.SAVE_FAULTY_OUTPUT,
                                                             save_ofm=SETTINGS.SAVE_FAULTY_OFM,
-                                                            ofm_folder=faulty_fm_folder)
+                                                            ofm_folder=SETTINGS.FAULTY_FM_FOLDER
+                                                        )
         
     else:
         print('Fault injection is disabled')
