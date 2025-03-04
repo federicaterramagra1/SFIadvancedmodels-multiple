@@ -16,6 +16,8 @@ class WeightFaultInjector:
         :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
         """
         for fault in faults:
+            if fault.layer_name.startswith('module.'):
+              fault.layer_name = fault.layer_name.replace('module.', '')  # Remove 'module.' prefix
             self.inject_fault(fault, fault_mode)
 
     def inject_fault(self, fault, fault_mode='stuck-at'):
