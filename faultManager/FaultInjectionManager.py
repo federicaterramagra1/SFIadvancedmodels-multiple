@@ -62,13 +62,13 @@ class FaultInjectionManager:
 
 
         def run_faulty_campaign_on_weight(self,
-                                      fault_model: str,
-                                      fault_list: list,
-                                      first_batch_only: bool = False,
-                                      force_n: int = None,
-                                      save_output: bool = False,
-                                      save_ofm: bool = False,
-                                      ofm_folder: str = None) -> (str, int):
+                                  fault_model: str,
+                                  fault_list: list,
+                                  first_batch_only: bool = False,
+                                  force_n: int = None,
+                                  save_output: bool = False,
+                                  save_ofm: bool = False,
+                                  ofm_folder: str = None) -> (str, int):
           """
           Run a faulty injection campaign for the network.
           """

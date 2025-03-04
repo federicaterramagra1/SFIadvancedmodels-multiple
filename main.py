@@ -108,11 +108,13 @@ def main():
                                                             num_faults_to_inject=SETTINGS.NUM_FAULTS_TO_INJECT  # Pass the number of faults to inject
                                                         )
         fault_injection_executor.run_faulty_campaign_on_weight(
-                                                            fault_model=SETTINGS.FAULT_MODEL,
+                                                            fault_model='stuck-at_params',
                                                             fault_list=fault_list,
-                                                            save_output=SETTINGS.SAVE_FAULTY_OUTPUT,
-                                                            save_ofm=SETTINGS.SAVE_FAULTY_OFM,
-                                                            ofm_folder=SETTINGS.FAULTY_FM_FOLDER
+                                                            first_batch_only=False,
+                                                            force_n=None,
+                                                            save_output=True,
+                                                            save_ofm=False,
+                                                            ofm_folder=None
                                                         )
         
     else:
