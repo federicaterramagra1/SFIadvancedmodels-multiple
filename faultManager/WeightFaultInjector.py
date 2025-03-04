@@ -17,8 +17,13 @@ class WeightFaultInjector:
         :param faults: List of faults to inject.
         :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
         """
-        for fault in faults:
-            self.inject_fault(fault, fault_mode)
+        if fault_mode == 'stuck-at':
+            self.__int8_stuck_at(faults)
+        elif fault_mode == 'bit-flip':
+            self.__int8_bit_flip(faults)
+        else:
+            raise ValueError(f'Invalid fault mode {fault_mode}')
+
 
     def inject_fault(self, fault, fault_mode='stuck-at'):
         """
@@ -31,30 +36,36 @@ class WeightFaultInjector:
         else:
             raise ValueError(f'Invalid fault mode {fault_mode}')
 
-    def __int8_bit_flip(self):
+    def __int8_bit_flip(self, faults):
         """
-        Inject a bit-flip on an 8-bit integer.
-        :return: The value of the bit-flip on the golden value
+        Inject multiple bit-flip faults into the weights of the network.
+        :param faults: List of faults to inject.
         """
-        # Perform bit-flip using XOR with a bitmask
-        bitmask = 1 << self.bit  # Create a bitmask for the specified bit
-        faulted_value = self.golden_value ^ bitmask  # Apply XOR to flip the bit
-        return faulted_value
+        with torch.no_grad():
+            for fault in faults:
+                layer = getattr(self.network, fault.layer_name)
+                weight_tensor = layer.weight.data.view(torch.uint8)
+                # Flip the specified bit
+                weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] ^ (1 << fault.bit)
+                # Convert back to the original dtype
+                layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
 
-    def __int8_stuck_at(self, value: int):
+    def __int8_stuck_at(self, faults):
         """
-        Inject a stuck-at fault on an 8-bit integer.
-        :param value: The value to use as stuck-at value (0 or 1)
-        :return: The value of the stuck-at fault on the golden value
+        Inject multiple stuck-at faults into the weights of the network.
+        :param faults: List of faults to inject.
         """
-        bitmask = 1 << self.bit  # Create a bitmask for the specified bit
-        if value == 1:
-            # Set the bit to 1 using OR
-            faulted_value = self.golden_value | bitmask
-        else:
-            # Set the bit to 0 using AND with the inverted bitmask
-            faulted_value = self.golden_value & ~bitmask
-        return faulted_value
+        with torch.no_grad():
+            for fault in faults:
+                layer = getattr(self.network, fault.layer_name)
+                weight_tensor = layer.weight.data.view(torch.uint8)
+                # Set the bit to the specified value
+                if fault.value == 1:
+                    weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] | (1 << fault.bit)
+                else:
+                    weight_tensor[fault.tensor_index] = weight_tensor[fault.tensor_index] & ~(1 << fault.bit)
+                # Convert back to the original dtype
+                layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
 
     def restore_golden(self):
         """
@@ -64,8 +75,7 @@ class WeightFaultInjector:
             print('CRITICAL ERROR: impossible to restore the golden value before setting a fault')
             quit()
 
-        self.network.state_dict()[self.layer_name][self.tensor_index] = self.golden_value
-
+            
     def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
         """
         Inject a bit-flip in the specified layer at the tensor_index position for the specified bit.
