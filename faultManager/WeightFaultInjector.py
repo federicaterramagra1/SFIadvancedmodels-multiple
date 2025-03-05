@@ -13,11 +13,11 @@ class WeightFaultInjector:
         """
         Inject multiple faults into the network.
         :param faults: List of faults to inject.
-        :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
+        :param fault_mode: The type of fault to inject ('stuck-at' or 'bit-flip').
         """
         for fault in faults:
             if fault.layer_name.startswith('module.'):
-              fault.layer_name = fault.layer_name.replace('module.', '')  # Remove 'module.' prefix
+                fault.layer_name = fault.layer_name.replace('module.', '')  # Remove 'module.' prefix
             self.inject_fault(fault, fault_mode)
 
     def inject_fault(self, fault, fault_mode='stuck-at'):
@@ -32,64 +32,51 @@ class WeightFaultInjector:
             raise ValueError(f'Invalid fault mode {fault_mode}')
 
     def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
-        """
-        Inject a bit-flip in the specified layer at the tensor_index position for the specified bit.
-        :param layer_name: The name of the layer
-        :param tensor_index: The index of the weight to fault inside the tensor
-        :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
-        """
-        self.__int8_bit_flip(layer_name, tensor_index, bit)
+        """ Inject a bit-flip at the given location. """
+        self.__modify_bit(layer_name, tensor_index, bit, mode="flip")
 
     def inject_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int):
-        """
-        Inject a stuck-at fault to the specified value in the specified layer at the tensor_index position for the
-        specified bit.
-        :param layer_name: The name of the layer
-        :param tensor_index: The index of the weight to fault inside the tensor
-        :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
-        :param value: The stuck-at value to set (0 or 1)
-        """
-        self.__int8_stuck_at(layer_name, tensor_index, bit, value)
+        """ Inject a stuck-at fault at the given location. """
+        self.__modify_bit(layer_name, tensor_index, bit, mode="stuck", stuck_value=value)
 
-    def __int8_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
+    def __modify_bit(self, layer_name: str, tensor_index: tuple, bit: int, mode="flip", stuck_value=None):
         """
-        Inject a bit-flip fault into the weights of the network.
-        :param layer_name: The name of the layer
-        :param tensor_index: The index of the weight to fault inside the tensor
-        :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
+        Modify a specific bit in the tensor (bit-flip or stuck-at).
         """
-        with torch.no_grad():
-            # Access the layer
-            layer = getattr(self.network.module, layer_name)
-            weight_tensor = layer.weight.data.view(torch.uint8)
+        try:
+            with torch.no_grad():
+                # Access the layer, handling DataParallel if needed
+                layer = getattr(self.network.module, layer_name) if hasattr(self.network, "module") else getattr(self.network, layer_name)
 
-            # Flip the specified bit
-            weight_tensor[tensor_index] = weight_tensor[tensor_index] ^ (1 << bit)
+                # Convert weights to uint8 for bit manipulation
+                weight_tensor = layer.weight.data
+                weight_float = weight_tensor[tensor_index].item()
+                
+                # Convert float to bytes (IEEE 754) for bit-level modification
+                weight_bytes = struct.pack('f', weight_float)
+                weight_int = int.from_bytes(weight_bytes, byteorder='little')
 
-            # Convert back to the original dtype
-            layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
+                if mode == "flip":
+                    weight_int ^= (1 << bit)  # Bit-flip
+                elif mode == "stuck":
+                    if stuck_value == 1:
+                        weight_int |= (1 << bit)  # Force bit to 1
+                    else:
+                        weight_int &= ~(1 << bit)  # Force bit to 0
 
-    def __int8_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int):
-        """
-        Inject a stuck-at fault into the weights of the network.
-        :param layer_name: The name of the layer
-        :param tensor_index: The index of the weight to fault inside the tensor
-        :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
-        :param value: The stuck-at value to set (0 or 1)
-        """
-        with torch.no_grad():
-            # Access the layer
-            layer = getattr(self.network.module, layer_name)
-            weight_tensor = layer.weight.data.view(torch.uint8)
+                # Convert back to float
+                new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
+                new_weight_float = struct.unpack('f', new_weight_bytes)[0]
 
-            # Set the bit to the specified value
-            if value == 1:
-                weight_tensor[tensor_index] = weight_tensor[tensor_index] | (1 << bit)
-            else:
-                weight_tensor[tensor_index] = weight_tensor[tensor_index] & ~(1 << bit)
+                # Assign modified weight back to tensor
+                layer.weight.data[tensor_index] = torch.tensor(new_weight_float, dtype=weight_tensor.dtype, device=weight_tensor.device)
 
-            # Convert back to the original dtype
-            layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
+        except AttributeError:
+            print(f"ERROR: Layer '{layer_name}' not found in the network.")
+        except IndexError:
+            print(f"ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}'.")
+        except Exception as e:
+            print(f"Unexpected error: {e}")
 
     def restore_golden(self):
         """
