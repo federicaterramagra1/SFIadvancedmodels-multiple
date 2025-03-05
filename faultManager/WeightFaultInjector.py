@@ -118,7 +118,7 @@ class WeightFaultInjector:
           # Convert back to the original dtype
           if hasattr(layer, '_packed_params'):
               # Re-quantize the weights
-              weight_tensor = weight_tensor.view(layer.weight.dtype)  # Convert back to the original dtype
+              weight_tensor = layer._packed_params.get_weight()  # Convert back to the original dtype
               layer._packed_params._packed_params[0] = torch.quantize_per_tensor(weight_tensor, scale=layer.scale, zero_point=layer.zero_point, dtype=torch.qint8)
           else:
               layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
