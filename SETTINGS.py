@@ -12,18 +12,22 @@ from dlModels.BreastCancer.mlp import SimpleMLP
 FAULT_MODEL available: 'stuck-at_params', 'byzantine_neuron'
 
 
-NETWORK available: 'SimpleMLP'
+NETWORK available: 'ResNet18', 'ResNet20', 'ResNet32', 'ResNet44', 
+                          'DenseNet121', 'DenseNet161','MobileNetV2', 
+                          'GoogLeNet', 'Vgg11_bn', 'Vgg13_bn', 'YOLOv5s',
+                          'DeepLabV3_resnet50'
 
 
-DATASET available: 'BreastCancer'
+DATASET available: 'CIFAR10', 'CIFAR100', 'GTSRB', 'COCO', 'PASCAL_VOC','COCOdetection'
+
 
 
 
 '''
 
 # network and dataset to use
-DATASET_NAME = 'BreastCancer'
-NETWORK_NAME = 'SimpleMLP'
+DATASET_NAME = 'CIFAR10'
+NETWORK_NAME = 'ResNet18'
 
 # Fault injection settings
 NUM_FAULTS_TO_INJECT = 2  # Number of faults to inject simultaneously

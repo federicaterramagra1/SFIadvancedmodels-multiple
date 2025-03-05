@@ -214,9 +214,9 @@ class FaultInjectionManager:
         :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
         """
         if fault_mode == 'stuck-at':
-            self.weight_fault_injector.inject_faults([fault], fault_mode='stuck-at')
+            self.weight_fault_injector.inject_faults([fault])
         elif fault_mode == 'bit-flip':
-            self.weight_fault_injector.inject_faults([fault], fault_mode='bit-flip')
+            self.weight_fault_injector.inject_faults([fault])
         else:
             print('FaultInjectionManager: Invalid fault mode')
             quit()
