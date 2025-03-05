@@ -52,44 +52,76 @@ class WeightFaultInjector:
         self.__int8_stuck_at(layer_name, tensor_index, bit, value)
 
     def __int8_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
-        """
-        Inject a bit-flip fault into the weights of the network.
-        :param layer_name: The name of the layer
-        :param tensor_index: The index of the weight to fault inside the tensor
-        :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
-        """
-        with torch.no_grad():
-            # Access the layer
-            layer = getattr(self.network.module, layer_name)
-            weight_tensor = layer.weight.data.view(torch.uint8)
+      """
+      Inject a bit-flip fault into the weights of the network.
+      :param layer_name: The name of the layer
+      :param tensor_index: The index of the weight to fault inside the tensor
+      :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
+      """
+      with torch.no_grad():
+          # Access the layer
+          layer = getattr(self.network.module, layer_name)
+          
+          # Check if the layer has _packed_params
+          if hasattr(layer, '_packed_params'):
+              # Unpack the weights
+              weight_tensor = layer._packed_params._packed_params[0]  # Access the packed weights
+              weight_tensor = weight_tensor.dequantize()  # Dequantize to get the full precision tensor
+              weight_tensor = weight_tensor.view(torch.uint8)  # Convert to uint8 for bit manipulation
+          else:
+              # If not quantized, access the weights directly
+              weight_tensor = layer.weight.data.view(torch.uint8)
 
-            # Flip the specified bit
-            weight_tensor[tensor_index] = weight_tensor[tensor_index] ^ (1 << bit)
+          # Flip the specified bit
+          weight_tensor[tensor_index] = weight_tensor[tensor_index] ^ (1 << bit)
 
-            # Convert back to the original dtype
-            layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
+          # Convert back to the original dtype
+          if hasattr(layer, '_packed_params'):
+              # Re-quantize the weights
+              weight_tensor = weight_tensor.view(layer.weight.dtype)  # Convert back to the original dtype
+              layer._packed_params._packed_params[0] = torch.quantize_per_tensor(weight_tensor, scale=layer.scale, zero_point=layer.zero_point, dtype=torch.qint8)
+          else:
+              layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
 
     def __int8_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int):
-        """
-        Inject a stuck-at fault into the weights of the network.
-        :param layer_name: The name of the layer
-        :param tensor_index: The index of the weight to fault inside the tensor
-        :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
-        :param value: The stuck-at value to set (0 or 1)
-        """
-        with torch.no_grad():
-            # Access the layer
-            layer = getattr(self.network.module, layer_name)
-            weight_tensor = layer.weight.data.view(torch.uint8)
+      """
+      Inject a stuck-at fault into the weights of the network.
+      :param layer_name: The name of the layer
+      :param tensor_index: The index of the weight to fault inside the tensor
+      :param bit: The bit where to inject the fault (0-7 for 8-bit integers)
+      :param value: The stuck-at value to set (0 or 1)
+      """
+      with torch.no_grad():
+          # Access the layer
+          print(f"Fault layer name: {layer_name}")  # Debugging
+          print(f"Tensor index: {tensor_index}")  # Debugging
+          print(f"Bit: {bit}")  # Debugging
+          print(f"Value: {value}")  # Debugging
+          layer = getattr(self.network.module, layer_name)
+          
+          # Check if the layer has _packed_params
+          if hasattr(layer, '_packed_params'):
+              # Unpack the weights
+              weight_tensor = layer._packed_params._packed_params[0]  # Access the packed weights
+              weight_tensor = weight_tensor.dequantize()  # Dequantize to get the full precision tensor
+              weight_tensor = weight_tensor.view(torch.uint8)  # Convert to uint8 for bit manipulation
+          else:
+              # If not quantized, access the weights directly
+              weight_tensor = layer.weight.data.view(torch.uint8)
 
-            # Set the bit to the specified value
-            if value == 1:
-                weight_tensor[tensor_index] = weight_tensor[tensor_index] | (1 << bit)
-            else:
-                weight_tensor[tensor_index] = weight_tensor[tensor_index] & ~(1 << bit)
+          # Set the bit to the specified value
+          if value == 1:
+              weight_tensor[tensor_index] = weight_tensor[tensor_index] | (1 << bit)
+          else:
+              weight_tensor[tensor_index] = weight_tensor[tensor_index] & ~(1 << bit)
 
-            # Convert back to the original dtype
-            layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
+          # Convert back to the original dtype
+          if hasattr(layer, '_packed_params'):
+              # Re-quantize the weights
+              weight_tensor = weight_tensor.view(layer.weight.dtype)  # Convert back to the original dtype
+              layer._packed_params._packed_params[0] = torch.quantize_per_tensor(weight_tensor, scale=layer.scale, zero_point=layer.zero_point, dtype=torch.qint8)
+          else:
+              layer.weight.data = weight_tensor.view(layer.weight.data.dtype)
 
     def restore_golden(self):
         """
