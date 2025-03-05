@@ -1,141 +1,91 @@
 import torch
+import struct
 
 class WeightFaultInjector:
+
     def __init__(self, network):
         self.network = network
-        self.layer_name = None
-        self.tensor_index = None
-        self.bit = None
-        self.golden_value = None
+        self.faults = []  # Store multiple faults
+
+    def inject_faults(self, faults):
+        """
+        Inject multiple faults at once.
+        :param faults: List of faults. Each fault is a dictionary with layer_name, tensor_index, bit, and optionally value.
+        """
+        for fault in faults:
+            layer_name = fault["layer_name"]
+            tensor_index = fault["tensor_index"]
+            bit = fault["bit"]
+            value = fault.get("value", None)  # None means bit-flip, otherwise it's stuck-at
+
+            self.__inject_fault(layer_name, tensor_index, bit, value)
 
     def __inject_fault(self, layer_name, tensor_index, bit, value=None):
-        """
-        Internal method to inject a fault into a quantized weight tensor.
-        """
-        self.layer_name = layer_name
-        self.tensor_index = tensor_index
-        self.bit = bit
+        layer = getattr(self.network, layer_name)
 
-        # Get the quantized layer
-        layer = getattr(self.network, self.layer_name)
+        # Extract quantized weight
+        weight_q = layer.weight()
+        weight_dq = weight_q.dequantize()  # Dequantize to FP32
+        scale, zero_point = weight_q.q_scale(), weight_q.q_zero_point()
 
-        # Dequantize the weight tensor to access its values
-        weight_tensor = layer.weight().dequantize()  # Dequantize to floating-point
-        self.golden_value = weight_tensor[self.tensor_index].item()  # Save the golden value
+        # Convert to int8 representation
+        weight_int8 = torch.round(weight_dq / scale + zero_point).to(torch.int8)
 
-        # Apply the fault injection logic
+        self.golden_value = weight_int8[tensor_index].item()  # Store original int8 value
+
+        # Apply bit-flip or stuck-at fault
         if value is None:
             faulty_value = self.__int8_bit_flip(self.golden_value, bit)
         else:
             faulty_value = self.__int8_stuck_at(self.golden_value, bit, value)
 
-        # Modify the weight tensor
-        weight_tensor[self.tensor_index] = faulty_value
+        # Update the weight tensor
+        weight_int8[tensor_index] = faulty_value
 
-        # Re-quantize the weight tensor and assign it back to the layer
-        quantized_weight = torch.quantize_per_tensor(
-            weight_tensor, layer.scale, layer.zero_point, torch.qint8
-        )
-        layer.set_weight_bias(quantized_weight, layer.bias())
+        # Re-quantize and assign back
+        weight_dq_faulty = (weight_int8.to(torch.float32) - zero_point) * scale
+        layer.set_weight_bias(torch.quantize_per_tensor(weight_dq_faulty, scale, zero_point, torch.qint8), layer.bias())
 
     def __int8_bit_flip(self, value, bit):
         """
-        Inject a bit-flip on an 8-bit integer value.
-        :param value: The original floating-point value.
-        :param bit: The bit to flip.
-        :return: The faulty floating-point value.
+        Flip a bit in an 8-bit integer.
+        :param value: Original 8-bit integer
+        :param bit: Position of the bit to flip (0-7)
         """
-        # Convert the floating-point value to an 8-bit integer
-        int8_value = int(value / self.network.state_dict()[self.layer_name + '.scale']) + self.network.state_dict()[self.layer_name + '.zero_point']
-        int8_value = int8_value & 0xFF  # Ensure it's 8 bits
+        return value ^ (1 << bit)  # XOR to flip the bit
 
-        # Flip the specified bit
-        faulty_int8_value = int8_value ^ (1 << bit)
-
-        # Convert back to floating-point
-        faulty_value = (faulty_int8_value - self.network.state_dict()[self.layer_name + '.zero_point']) * self.network.state_dict()[self.layer_name + '.scale']
-        return faulty_value
-
-    def __int8_stuck_at(self, value, bit, stuck_value):
+    def __int8_stuck_at(self, value, bit, set_value):
         """
-        Inject a stuck-at fault on an 8-bit integer value.
-        :param value: The original floating-point value.
-        :param bit: The bit to modify.
-        :param stuck_value: The value to set (0 or 1).
-        :return: The faulty floating-point value.
+        Inject a stuck-at fault in an 8-bit integer.
+        :param value: Original 8-bit integer
+        :param bit: Position of the bit (0-7)
+        :param set_value: 0 or 1 (value to "stick" the bit to)
         """
-        # Convert the floating-point value to an 8-bit integer
-        int8_value = int(value / self.network.state_dict()[self.layer_name + '.scale']) + self.network.state_dict()[self.layer_name + '.zero_point']
-        int8_value = int8_value & 0xFF  # Ensure it's 8 bits
-
-        # Set the specified bit to the stuck-at value
-        if stuck_value == 1:
-            faulty_int8_value = int8_value | (1 << bit)
+        if set_value == 1:
+            return value | (1 << bit)  # Force bit to 1
         else:
-            faulty_int8_value = int8_value & ~(1 << bit)
+            return value & ~(1 << bit)  # Force bit to 0
 
-        # Convert back to floating-point
-        faulty_value = (faulty_int8_value - self.network.state_dict()[self.layer_name + '.zero_point']) * self.network.state_dict()[self.layer_name + '.scale']
-        return faulty_value
-
-    def restore_golden(self):
+    def restore_golden(self, layer_name, tensor_index):
         """
-        Restore the value of the faulted network weight to its golden value.
+        Restore the original value of a weight.
+        :param layer_name: Name of the layer
+        :param tensor_index: Index of the weight
         """
-        if self.layer_name is None:
-            print('CRITICAL ERROR: impossible to restore the golden value before setting a fault')
-            quit()
+        if self.golden_value is None:
+            print("No fault injected yet.")
+            return
 
-        # Get the quantized layer
-        layer = getattr(self.network, self.layer_name)
+        layer = getattr(self.network, layer_name)
+        weight_q = layer.weight()
+        scale, zero_point = weight_q.q_scale(), weight_q.q_zero_point()
 
-        # Dequantize the weight tensor
-        weight_tensor = layer.weight().dequantize()
+        # Convert golden value back
+        golden_float = (self.golden_value - zero_point) * scale
 
-        # Restore the golden value
-        weight_tensor[self.tensor_index] = self.golden_value
+        # Restore the weight
+        weight_dq = weight_q.dequantize()
+        weight_dq[tensor_index] = golden_float
 
-        # Re-quantize the weight tensor and assign it back to the layer
-        quantized_weight = torch.quantize_per_tensor(
-            weight_tensor, layer.scale, layer.zero_point, torch.qint8
-        )
-        layer.set_weight_bias(quantized_weight, layer.bias())
-
-    def inject_bit_flip(self, layer_name, tensor_index, bit):
-        """
-        Inject a bit-flip in the specified layer at the tensor_index position for the specified bit.
-        :param layer_name: The name of the layer.
-        :param tensor_index: The index of the weight to fault inside the tensor.
-        :param bit: The bit where to inject the fault.
-        """
-        self.__inject_fault(layer_name=layer_name, tensor_index=tensor_index, bit=bit)
-
-    def inject_stuck_at(self, layer_name, tensor_index, bit, value):
-        """
-        Inject a stuck-at fault to the specified value in the specified layer at the tensor_index position for the
-        specified bit.
-        :param layer_name: The name of the layer.
-        :param tensor_index: The index of the weight to fault inside the tensor.
-        :param bit: The bit where to inject the fault.
-        :param value: The stuck-at value to set.
-        """
-        self.__inject_fault(layer_name=layer_name, tensor_index=tensor_index, bit=bit, value=value)
-
-    def inject_faults(self, faults: list, fault_mode='stuck-at'):
-        """
-        Inject multiple faults into the network.
-        :param faults: List of faults to inject.
-        :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
-        """
-        for fault in faults:
-            # Handle 'module.' prefix in layer names
-            if fault.layer_name.startswith('module.'):
-                fault.layer_name = fault.layer_name.replace('module.', '')
-
-            # Inject the fault based on the fault mode
-            if fault_mode == 'stuck-at':
-                self.inject_stuck_at(fault.layer_name, fault.tensor_index, fault.bit, fault.value)
-            elif fault_mode == 'bit-flip':
-                self.inject_bit_flip(fault.layer_name, fault.tensor_index, fault.bit)
-            else:
-                raise ValueError(f"Unsupported fault mode: {fault_mode}")
+        # Re-quantize and assign back
+        layer.set_weight_bias(torch.quantize_per_tensor(weight_dq, scale, zero_point, torch.qint8), layer.bias())
