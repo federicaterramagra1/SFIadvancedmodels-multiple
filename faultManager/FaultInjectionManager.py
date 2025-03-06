@@ -11,15 +11,11 @@ import numpy as np
 import torch
 from torch.nn import Module
 from torch.utils.data import DataLoader
-
+from typing import List, Union
 from tqdm import tqdm
 
 from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-
-from typing import List, Union
-import itertools  # Add this import
-
 class FaultInjectionManager:
     def __init__(self,
                  network: Module,
@@ -49,26 +45,21 @@ class FaultInjectionManager:
 
     
     def run_clean_campaign(self):
-
-        pbar = tqdm(self.loader,
-                    desc='Clean Inference',
-                    colour='green')
+        pbar = tqdm(self.loader, desc='Clean Inference', colour='green')
 
         for batch_id, batch in enumerate(pbar):
             data, _ = batch
             data = data.to(self.device)
-
             self.network(data)
 
-
     def run_faulty_campaign_on_weight(self,
-                                  fault_model: str,
-                                  fault_list: list,
-                                  first_batch_only: bool = False,
-                                  force_n: int = None,
-                                  save_output: bool = False,
-                                  save_ofm: bool = False,
-                                  ofm_folder: str = None) -> (str, int):
+                                      fault_model: str,
+                                      fault_list: list,
+                                      first_batch_only: bool = False,
+                                      force_n: int = None,
+                                      save_output: bool = False,
+                                      save_ofm: bool = False,
+                                      ofm_folder: str = None) -> (str, int):
         """
         Run a faulty injection campaign for the network.
         """
@@ -86,7 +77,7 @@ class FaultInjectionManager:
                 fault_list = fault_list[:force_n]
 
             # Order the fault list to speed up the injection
-            fault_list = sorted(fault_list, key=lambda x: x.injection)
+            fault_list = sorted(fault_list, key=lambda x: x['injection_id'])
 
             # Start measuring the time elapsed
             start_time = time.time()
@@ -108,37 +99,26 @@ class FaultInjectionManager:
                 batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
 
                 # Inject all the faults in a single batch
-                pbar = tqdm(fault_list,
-                            colour='green',
-                            desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns * 2)
-                for fault_id, fault in enumerate(pbar):
+                pbar = tqdm(fault_list, colour='green', desc=f'FI on b {batch_id}', ncols=shutil.get_terminal_size().columns * 2)
+                for fault_group in pbar:
+                    injection_id = fault_group['injection_id']
+                    faults = fault_group['faults']
+
                     # Inject faults
-                    if fault_model == 'byzantine_neuron':
-                        injected_layer = self.__inject_fault_on_neuron(fault=fault)
-                    elif fault_model == 'stuck-at_params':
-                        self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
-                    else:
-                        raise ValueError(f'Invalid fault model {fault_model}')
+                    self.__inject_fault_on_weight(faults, fault_mode='stuck-at')
 
                     # Run inference on the current batch
-                    faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
-                                                                                                        data=data)
+                    faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id, data=data)
 
                     # Measure the accuracy of the batch
-                    accuracy_batch_dict[fault_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices)))/len(target))
+                    accuracy_batch_dict[injection_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices))) / len(target))
 
                     # Store the faulty prediction if the option is set
                     if save_output:
                         self.faulty_output.append(faulty_scores.numpy())
 
                     # Clean the fault
-                    if fault_model == 'byzantine_neuron':
-                        injected_layer.clean_fault()
-                    elif fault_model == 'stuck-at_params':
-                        self.weight_fault_injector.restore_golden()
-                    else:
-                        raise ValueError(f'Invalid fault model {fault_model}')
+                    self.weight_fault_injector.restore_golden()
 
                     # Increment the iteration count
                     total_iterations += 1
@@ -177,10 +157,7 @@ class FaultInjectionManager:
 
         return str(timedelta(seconds=elapsed)), average_memory_occupation
 
-
-    def __run_inference_on_batch(self,
-                                 batch_id: int,
-                                 data: torch.Tensor):
+    def __run_inference_on_batch(self, batch_id: int, data: torch.Tensor):
         try:
             # Execute the network on the batch
             network_output = self.network(data)
@@ -208,23 +185,21 @@ class FaultInjectionManager:
 
         return faulty_prediction_scores, faulty_prediction_indices, different_predictions
 
-    def __inject_fault_on_weight(self, fault, fault_mode='stuck-at') -> None:
+    def __inject_fault_on_weight(self, faults, fault_mode='stuck-at') -> None:
         """
         Inject multiple faults in the weights of the network.
-        :param fault: The fault to inject.
+        :param faults: The list of faults to inject.
         :param fault_mode: The type of fault to inject (e.g., 'stuck-at' or 'bit-flip').
         """
         if fault_mode == 'stuck-at':
-            self.weight_fault_injector.inject_faults([fault], fault_mode='stuck-at')
+            self.weight_fault_injector.inject_faults(faults, fault_mode='stuck-at')
         elif fault_mode == 'bit-flip':
-            self.weight_fault_injector.inject_faults([fault], fault_mode='bit-flip')
+            self.weight_fault_injector.inject_faults(faults, fault_mode='bit-flip')
         else:
             print('FaultInjectionManager: Invalid fault mode')
             quit()
 
-
-    def __inject_fault_on_neuron(self,
-                                 fault: NeuronFault) -> Module:
+    def __inject_fault_on_neuron(self, fault: NeuronFault) -> Module:
         """
         Inject a fault in the neuron
         :param fault: The fault to inject
@@ -248,8 +223,12 @@ class FaultInjectionManager:
         output_fault = torch.ones(size=self.injectable_modules[layer].output_shape, device=self.device).mul(value)
 
         # Inject the fault
-        self.injectable_modules[layer].inject_fault(output_fault=output_fault,
-                                                    output_fault_mask=output_fault_mask)
+        self.injectable_modules[layer].inject_fault(output_fault=output_fault, output_fault_mask=output_fault_mask)
+
+        # Return the injected layer
+        return self.injectable_modules[layer]
+
+
 
         # Return the injected layer
         return self.injectable_modules[layer]
