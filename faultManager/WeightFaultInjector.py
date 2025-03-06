@@ -7,7 +7,11 @@ class WeightFaultInjector:
         self.layer_name = None
         self.tensor_index = None
         self.bit = None
-        self.golden_parameters = {name: param.clone() for name, param in self.network.state_dict().items() if isinstance(param, torch.Tensor)}
+        self.golden_parameters = self.clone_state_dict(network.state_dict())
+
+    def clone_state_dict(self, state_dict):
+        """Clone the state dictionary, handling only tensor parameters."""
+        return {name: param.clone() if isinstance(param, torch.Tensor) else param for name, param in state_dict.items()}
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         for fault in faults:
@@ -90,4 +94,8 @@ class WeightFaultInjector:
             print(f"Unexpected error: {e}")
 
     def restore_golden(self):
-        self.network.load_state_dict(self.golden_parameters)
+        for name, param in self.golden_parameters.items():
+            if name in self.network.state_dict():
+                self.network.state_dict()[name].copy_(param)
+            else:
+                print(f"Warning: Layer '{name}' not found in the network. Skipping restore for this layer.")
