@@ -43,15 +43,6 @@ class FaultInjectionManager:
         self.weight_fault_injector = WeightFaultInjector(self.network)
         self.injectable_modules = injectable_modules
 
-    
-    def run_clean_campaign(self):
-        pbar = tqdm(self.loader, desc='Clean Inference', colour='green')
-
-        for batch_id, batch in enumerate(pbar):
-            data, _ = batch
-            data = data.to(self.device)
-            self.network(data)
-
     def run_faulty_campaign_on_weight(self,
                                       fault_model: str,
                                       fault_list: list,
@@ -60,9 +51,6 @@ class FaultInjectionManager:
                                       save_output: bool = False,
                                       save_ofm: bool = False,
                                       ofm_folder: str = None) -> (str, int):
-        """
-        Run a faulty injection campaign for the network.
-        """
         self.skipped_inferences = 0
         self.total_inferences = 0
 
@@ -77,7 +65,7 @@ class FaultInjectionManager:
                 fault_list = fault_list[:force_n]
 
             # Order the fault list to speed up the injection
-            fault_list = sorted(fault_list, key=lambda x: x['injection_id'])
+            fault_list = sorted(fault_list, key=lambda x: x.injection)
 
             # Start measuring the time elapsed
             start_time = time.time()
@@ -99,26 +87,37 @@ class FaultInjectionManager:
                 batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
 
                 # Inject all the faults in a single batch
-                pbar = tqdm(fault_list, colour='green', desc=f'FI on b {batch_id}', ncols=shutil.get_terminal_size().columns * 2)
-                for fault_group in pbar:
-                    injection_id = fault_group['injection_id']
-                    faults = fault_group['faults']
-
+                pbar = tqdm(fault_list,
+                            colour='green',
+                            desc=f'FI on b {batch_id}',
+                            ncols=shutil.get_terminal_size().columns * 2)
+                for fault_id, fault in enumerate(pbar):
                     # Inject faults
-                    self.__inject_fault_on_weight(faults, fault_mode='stuck-at')
+                    if fault_model == 'byzantine_neuron':
+                        injected_layer = self.__inject_fault_on_neuron(fault=fault)
+                    elif fault_model == 'stuck-at_params':
+                        self.weight_fault_injector.inject_faults([fault], fault_mode='stuck-at')
+                    else:
+                        raise ValueError(f'Invalid fault model {fault_model}')
 
                     # Run inference on the current batch
-                    faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id, data=data)
+                    faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
+                                                                                                        data=data)
 
                     # Measure the accuracy of the batch
-                    accuracy_batch_dict[injection_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices))) / len(target))
+                    accuracy_batch_dict[fault_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices)))/len(target))
 
                     # Store the faulty prediction if the option is set
                     if save_output:
                         self.faulty_output.append(faulty_scores.numpy())
 
                     # Clean the fault
-                    self.weight_fault_injector.restore_golden()
+                    if fault_model == 'byzantine_neuron':
+                        injected_layer.clean_fault()
+                    elif fault_model == 'stuck-at_params':
+                        self.weight_fault_injector.restore_golden()
+                    else:
+                        raise ValueError(f'Invalid fault model {fault_model}')
 
                     # Increment the iteration count
                     total_iterations += 1
