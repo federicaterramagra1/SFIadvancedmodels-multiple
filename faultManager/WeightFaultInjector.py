@@ -1,9 +1,11 @@
 import struct
 import torch
+import copy
 
 class WeightFaultInjector:
     def __init__(self, network):
         self.network = network.module if hasattr(network, 'module') else network
+        self.golden_parameters = copy.deepcopy(network.state_dict())
         self.layer_name = None
         self.tensor_index = None
         self.bit = None
@@ -90,32 +92,16 @@ class WeightFaultInjector:
             print(f"Unexpected error: {e}")
 
     def restore_golden(self):
-        if self.layer_name is None or self.tensor_index is None or self.golden_value is None:
-            print('CRITICAL ERROR: impossible to restore the golden value before setting a fault')
-            return
-        state_dict = self.network.state_dict()
-        if f"{self.layer_name}._packed_params._packed_params" in state_dict:
-            packed_params = state_dict[f"{self.layer_name}._packed_params._packed_params"]
-            weight_tensor = packed_params[0].dequantize()
-        else:
-            weight_tensor = state_dict[f"{self.layer_name}.weight"]
-        
-        if any(index >= dim for index, dim in zip(self.tensor_index, weight_tensor.shape)):
-            print(f"ERROR: Tensor index {self.tensor_index} is out of range for layer '{self.layer_name}'.")
-            return
-        
-        weight_tensor[self.tensor_index] = self.golden_value
-        if f"{self.layer_name}._packed_params._packed_params" in state_dict:
-            scales = packed_params[1]
-            zero_points = packed_params[2]
-            axis = packed_params[3]
-            dtype = packed_params[4]
-            packed_params_list = [
-                torch.quantize_per_channel(weight_tensor, scales, zero_points, axis, dtype),
-                scales, zero_points, axis, dtype
-            ]
-            state_dict[f"{self.layer_name}._packed_params._packed_params"] = tuple(packed_params_list)
-        else:
-            state_dict[f"{self.layer_name}.weight"] = weight_tensor
-        self.network.load_state_dict(state_dict)
-        print(f"Restored weight to golden value: {weight_tensor[self.tensor_index].item()}")  
+        for name, param in self.network.named_parameters():
+            if 'packed_params' in name:
+                try:
+                    packed_params = self.golden_parameters[name]
+                    weights, biases, zero_points, scales = packed_params
+                    param.data.copy_(weights)
+                    if param.bias is not None:
+                        param.bias.copy_(biases)
+                except IndexError:
+                    print(f"Warning: Packed parameters for layer '{name}' do not have the expected format. Skipping restore for this layer.")
+                    continue
+            else:
+                param.data.copy_(self.golden_parameters[name])
