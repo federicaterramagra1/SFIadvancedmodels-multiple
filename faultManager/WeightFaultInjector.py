@@ -7,7 +7,7 @@ class WeightFaultInjector:
         self.layer_name = None
         self.tensor_index = None
         self.bit = None
-        self.golden_parameters = {name: param.clone() for name, param in self.network.state_dict().items()}
+        self.golden_parameters = {name: param.clone() for name, param in self.network.state_dict().items() if isinstance(param, torch.Tensor)}
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         for fault in faults:
