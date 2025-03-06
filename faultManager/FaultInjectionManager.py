@@ -72,6 +72,14 @@ class FaultInjectionManager:
           """
           Run a faulty injection campaign for the network.
           """
+
+          for idx, fault in enumerate(fault_list):
+            # Your existing code
+            faulty_scores = self.network(data)
+            self.weight_fault_injector.restore_golden()
+            self.faulty_output.append(faulty_scores.cpu().numpy())  # Convert to CPU before numpy
+
+            
           self.skipped_inferences = 0
           self.total_inferences = 0
 

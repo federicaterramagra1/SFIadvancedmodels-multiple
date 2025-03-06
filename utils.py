@@ -37,75 +37,70 @@ class UnknownNetworkException(Exception):
 
 
 def clean_inference(network, loader, device, network_name):
-       
     clean_output_scores = list()
     clean_output_indices = list()
     clean_labels = list()
 
     counter = 0
-    with torch.no_grad():
-        pbar = tqdm(loader,
-                colour='green',
-                desc=f'Clean Run',
-                ncols=shutil.get_terminal_size().columns)
+    dataset_size = 0
 
-        dataset_size = 0
-        
+    with torch.no_grad():
+        pbar = tqdm(loader, colour='green', desc='Clean Run')
+
         for batch_id, batch in enumerate(pbar):
             data, label = batch
-            dataset_size = dataset_size + len(label)
+            dataset_size += len(label)
             data = data.to(device)
             
             network_output = network(data)
             prediction = torch.topk(network_output, k=1)
             scores = network_output.cpu()
             indices = [int(fault) for fault in prediction.indices]
-            
+
             clean_output_scores.append(scores)
             clean_output_indices.append(indices)
             clean_labels.append(label)
-            
-            counter = counter + 1
 
+            counter += 1
 
-        elementwise_comparison = [label != index for labels, indices in zip(clean_labels, clean_output_indices) for label, index in zip(labels, indices)]          
+        elementwise_comparison = [
+            label != index 
+            for labels, indices in zip(clean_labels, clean_output_indices) 
+            for label, index in zip(labels, indices)
+        ]
+
         # Count the number of different elements
         num_different_elements = elementwise_comparison.count(True)
         
         print(f'device: {device}')
         print(f'network: {network_name}')
-        print(f"The DNN wrong predicions are: {num_different_elements}")
-        accuracy= (1 - num_different_elements/dataset_size)*100
-        print(f"The final accuracy is: {accuracy}%")
+        print(f"The DNN wrong predictions are: {num_different_elements}")
+        accuracy = (1 - num_different_elements / dataset_size) * 100
+        print(f"The final accuracy is: {accuracy:.2f}%")
         
               
-def get_network(network_name: str,
-                device: torch.device,
-                dataset_name: str,
-                root: str = '.') -> torch.nn.Module:
-    
-    # Load the network by using the name of the mode and the dataset
+def get_network(network_name: str, device: torch.device, dataset_name: str, root: str = '.') -> torch.nn.Module:
     if dataset_name == 'BreastCancer':
         print(f'Loading network {network_name} for BreastCancer ...')
         if network_name == 'SimpleMLP':
             from dlModels.BreastCancer.mlp import SimpleMLP
             network = SimpleMLP()
-            # Explicitly attach the quantize method to the network
-            network.quantize = network.quantize
             # Wrap the model for quantization
             network = torch.quantization.QuantWrapper(network)
-            network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
-            # Explicitly attach the quantize method to the wrapped model
-            network.quantize = network.module.quantize
+            network.qconfig = torch.quantization.get_default_qconfig('fbgemm')  # Suitable for x86 CPUs
+            network.quantize()  # Quantize the model
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
         
-        # Move the model to the specified device
         network.to(device)
 
+    else:
+        raise ValueError(f"Unknown dataset '{dataset_name}'")
+    
     network.eval()
     
     return network
+
 
 def get_loader(network_name: str,
                batch_size: int,

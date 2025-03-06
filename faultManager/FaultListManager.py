@@ -128,9 +128,6 @@ class FLManager:
             exit(-1)
 
     def validate_fault_list(self, fault_list: List[WeightFault]) -> List[WeightFault]:
-        """
-        Validate the fault list to ensure indices are within valid ranges.
-        """
         valid_fault_list = []
         state_dict = self.network.state_dict()
 
@@ -143,13 +140,13 @@ class FLManager:
 
             print(f"Validating fault for layer '{fault.layer_name}' with index {fault.tensor_index} and weight tensor shape {weight_tensor.shape}.")  
 
-            # Validate tensor indices
             if all(0 <= index < dim for index, dim in zip(fault.tensor_index, weight_tensor.shape)):
                 valid_fault_list.append(fault)
             else:
                 print(f"Skipping invalid fault with index {fault.tensor_index} for layer '{fault.layer_name}'.")
 
         return valid_fault_list
+
 
 
 
