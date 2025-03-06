@@ -69,121 +69,114 @@ class FaultInjectionManager:
                                   save_output: bool = False,
                                   save_ofm: bool = False,
                                   ofm_folder: str = None) -> (str, int):
-          """
-          Run a faulty injection campaign for the network.
-          """
+        """
+        Run a faulty injection campaign for the network.
+        """
+        self.skipped_inferences = 0
+        self.total_inferences = 0
 
-          for idx, fault in enumerate(fault_list):
-            # Your existing code
-            faulty_scores = self.network(data)
-            self.weight_fault_injector.restore_golden()
-            self.faulty_output.append(faulty_scores.cpu().numpy())  # Convert to CPU before numpy
+        total_different_predictions = 0
+        total_predictions = 0
 
-            
-          self.skipped_inferences = 0
-          self.total_inferences = 0
+        average_memory_occupation = 0
+        total_iterations = 1
 
-          total_different_predictions = 0
-          total_predictions = 0
+        with torch.no_grad():
+            if force_n is not None:
+                fault_list = fault_list[:force_n]
 
-          average_memory_occupation = 0
-          total_iterations = 1
+            # Order the fault list to speed up the injection
+            fault_list = sorted(fault_list, key=lambda x: x.injection)
 
-          with torch.no_grad():
-              if force_n is not None:
-                  fault_list = fault_list[:force_n]
+            # Start measuring the time elapsed
+            start_time = time.time()
 
-              # Order the fault list to speed up the injection
-              fault_list = sorted(fault_list, key=lambda x: x.injection)
+            # The dict measuring the accuracy of each batch
+            accuracy_dict = dict()
 
-              # Start measuring the time elapsed
-              start_time = time.time()
+            # Cycle all the batches in the data loader
+            for batch_id, batch in enumerate(self.loader):
+                data, target = batch
+                data = data.to(self.device)
 
-              # The dict measuring the accuracy of each batch
-              accuracy_dict = dict()
+                # The list of the accuracy of the network for each fault
+                accuracy_batch_dict = dict()
+                accuracy_dict[batch_id] = accuracy_batch_dict
 
-              # Cycle all the batches in the data loader
-              for batch_id, batch in enumerate(self.loader):
-                  data, target = batch
-                  data = data.to(self.device)
+                faulty_prediction_dict = dict()
+                batch_clean_prediction_scores = [float(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).values]
+                batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
 
-                  # The list of the accuracy of the network for each fault
-                  accuracy_batch_dict = dict()
-                  accuracy_dict[batch_id] = accuracy_batch_dict
+                # Inject all the faults in a single batch
+                pbar = tqdm(fault_list,
+                            colour='green',
+                            desc=f'FI on b {batch_id}',
+                            ncols=shutil.get_terminal_size().columns * 2)
+                for fault_id, fault in enumerate(pbar):
+                    # Inject faults
+                    if fault_model == 'byzantine_neuron':
+                        injected_layer = self.__inject_fault_on_neuron(fault=fault)
+                    elif fault_model == 'stuck-at_params':
+                        self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
+                    else:
+                        raise ValueError(f'Invalid fault model {fault_model}')
 
-                  faulty_prediction_dict = dict()
-                  batch_clean_prediction_scores = [float(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).values]
-                  batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
+                    # Run inference on the current batch
+                    faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
+                                                                                                        data=data)
 
-                  # Inject all the faults in a single batch
-                  pbar = tqdm(fault_list,
-                              colour='green',
-                              desc=f'FI on b {batch_id}',
-                              ncols=shutil.get_terminal_size().columns * 2)
-                  for fault_id, fault in enumerate(pbar):
-                      # Inject faults
-                      if fault_model == 'byzantine_neuron':
-                          injected_layer = self.__inject_fault_on_neuron(fault=fault)
-                      elif fault_model == 'stuck-at_params':
-                          self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
-                      else:
-                          raise ValueError(f'Invalid fault model {fault_model}')
+                    # Measure the accuracy of the batch
+                    accuracy_batch_dict[fault_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices)))/len(target))
 
-                      # Run inference on the current batch
-                      faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
-                                                                                                          data=data)
+                    # Store the faulty prediction if the option is set
+                    if save_output:
+                        self.faulty_output.append(faulty_scores.numpy())
 
-                      # Measure the accuracy of the batch
-                      accuracy_batch_dict[fault_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices)))/len(target))
+                    # Clean the fault
+                    if fault_model == 'byzantine_neuron':
+                        injected_layer.clean_fault()
+                    elif fault_model == 'stuck-at_params':
+                        self.weight_fault_injector.restore_golden()
+                    else:
+                        raise ValueError(f'Invalid fault model {fault_model}')
 
-                      # Store the faulty prediction if the option is set
-                      if save_output:
-                          self.faulty_output.append(faulty_scores.numpy())
+                    # Increment the iteration count
+                    total_iterations += 1
 
-                      # Clean the fault
-                      if fault_model == 'byzantine_neuron':
-                          injected_layer.clean_fault()
-                      elif fault_model == 'stuck-at_params':
-                          self.weight_fault_injector.restore_golden()
-                      else:
-                          raise ValueError(f'Invalid fault model {fault_model}')
+                # Log the accuracy of the batch
+                os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
+                log_filename = f'{self.__log_folder}/{fault_model}/batch_{batch_id}.csv'
+                with open(log_filename, 'w') as log_file:
+                    log_writer = csv.writer(log_file)
+                    log_writer.writerows(accuracy_batch_dict.items())
 
-                      # Increment the iteration count
-                      total_iterations += 1
+                # Save the output to file if the option is set
+                if save_output:
+                    os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
+                    np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
+                    self.faulty_output = list()
 
-                  # Log the accuracy of the batch
-                  os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
-                  log_filename = f'{self.__log_folder}/{fault_model}/batch_{batch_id}.csv'
-                  with open(log_filename, 'w') as log_file:
-                      log_writer = csv.writer(log_file)
-                      log_writer.writerows(accuracy_batch_dict.items())
+                # End after only one batch if the option is specified
+                if first_batch_only:
+                    break
 
-                  # Save the output to file if the option is set
-                  if save_output:
-                      os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
-                      np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
-                      self.faulty_output = list()
+        # Measure the average accuracy
+        average_accuracy_dict = dict()
+        for fault_id in range(len(fault_list)):
+            fault_accuracy = np.average([accuracy_batch_dict[fault_id] for _, accuracy_batch_dict in accuracy_dict.items()])
+            average_accuracy_dict[fault_id] = float(fault_accuracy)
 
-                  # End after only one batch if the option is specified
-                  if first_batch_only:
-                      break
+        # Final log
+        os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
+        log_filename = f'{self.__log_folder}/{fault_model}/all_batches.csv'
+        with open(log_filename, 'w') as log_file:
+            log_writer = csv.writer(log_file)
+            log_writer.writerows(average_accuracy_dict.items())
 
-          # Measure the average accuracy
-          average_accuracy_dict = dict()
-          for fault_id in range(len(fault_list)):
-              fault_accuracy = np.average([accuracy_batch_dict[fault_id] for _, accuracy_batch_dict in accuracy_dict.items()])
-              average_accuracy_dict[fault_id] = float(fault_accuracy)
+        elapsed = math.ceil(time.time() - start_time)
 
-          # Final log
-          os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
-          log_filename = f'{self.__log_folder}/{fault_model}/all_batches.csv'
-          with open(log_filename, 'w') as log_file:
-              log_writer = csv.writer(log_file)
-              log_writer.writerows(average_accuracy_dict.items())
+        return str(timedelta(seconds=elapsed)), average_memory_occupation
 
-          elapsed = math.ceil(time.time() - start_time)
-
-          return str(timedelta(seconds=elapsed)), average_memory_occupation
 
     def __run_inference_on_batch(self,
                                  batch_id: int,
