@@ -78,25 +78,30 @@ def clean_inference(network, loader, device, network_name):
         accuracy = (1 - num_different_elements / dataset_size) * 100
         print(f"The final accuracy is: {accuracy:.2f}%")
         
-              
-def get_network(network_name: str, device: torch.device, dataset_name: str, root: str = '.') -> torch.nn.Module:
+def get_network(network_name: str,
+                device: torch.device,
+                dataset_name: str,
+                root: str = '.') -> torch.nn.Module:
+    
+    # Load the network by using the name of the mode and the dataset
     if dataset_name == 'BreastCancer':
         print(f'Loading network {network_name} for BreastCancer ...')
         if network_name == 'SimpleMLP':
             from dlModels.BreastCancer.mlp import SimpleMLP
             network = SimpleMLP()
+            # Explicitly attach the quantize method to the network
+            network.quantize_model = network.quantize_model
             # Wrap the model for quantization
             network = torch.quantization.QuantWrapper(network)
-            network.qconfig = torch.quantization.get_default_qconfig('fbgemm')  # Suitable for x86 CPUs
-            network.quantize()  # Quantize the model
+            network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
+            # Explicitly attach the quantize method to the wrapped model
+            network.quantize_model = network.module.quantize_model
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
         
+        # Move the model to the specified device
         network.to(device)
 
-    else:
-        raise ValueError(f"Unknown dataset '{dataset_name}'")
-    
     network.eval()
     
     return network
@@ -755,10 +760,8 @@ def output_definition(test_loader, batch_size):
 
 
 def csv_summary():
-    
     network_name = SETTINGS.NETWORK_NAME
 
-    # Specify the input and output file paths
     input_file_path1 = f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv'
     fault_list_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
     output_file_path = f'{SETTINGS.FI_SUM_ANALYSIS_PATH}'
@@ -769,11 +772,20 @@ def csv_summary():
 
     # Read data from the input CSV file into a DataFrame
     print(f'reading {network_name} input file 1 ...')
-    df = pd.read_csv(input_file_path1)
-    print('done')
+    try:
+        df = pd.read_csv(input_file_path1)
+        print('done')
+    except FileNotFoundError:
+        print(f"File not found: {input_file_path1}")
+        return
+
     print(f'reading FL input file 2 ...')
-    df2 = pd.read_csv(input_file_path2)
-    print('done')
+    try:
+        df2 = pd.read_csv(input_file_path2)
+        print('done')
+    except FileNotFoundError:
+        print(f"File not found: {input_file_path2}")
+        return
 
     masked_list = []
     non_critic_list = []
@@ -781,8 +793,6 @@ def csv_summary():
 
     num_rows = df2.shape[0]
     for i in tqdm(range(num_rows)):
-
-        
         masked = df[df['fault'] == i]['output'].eq(0).sum()
         masked_list.append(masked)
         
@@ -802,8 +812,8 @@ def csv_summary():
     df2['non_critical'] = non_critic_list
     df2['critical'] = critical_list
 
-
-    df2.to_csv(output_file_path, index=False)  
+    df2.to_csv(output_file_path, index=False)
+    print(f"Summary CSV saved to {output_file_path}")
     
 
 import numpy as np
@@ -812,51 +822,43 @@ import torch
 import csv
 import os
 import SETTINGS
-
 def fault_list_gen():
-    # Set a seed for reproducibility
     random_seed = SETTINGS.SEED
     random.seed(random_seed)
 
-    PRINT = True
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Load the network
-    network = get_network(network_name=SETTINGS.NETWORK_NAME,
-                          device=device,
-                          dataset_name=SETTINGS.DATASET_NAME)
+    network = get_network(network_name=SETTINGS.NETWORK_NAME, device=device, dataset_name=SETTINGS.DATASET_NAME)
     network.to(device)
 
-    # Check if the model is quantized
-    is_quantized = hasattr(network, 'quantize') and isinstance(network, torch.quantization.QuantWrapper)
+    # Check if the model is quantized correctly
+    is_quantized = any(isinstance(m, torch.quantization.QuantWrapper) for m in network.modules()) or any(hasattr(m, 'qconfig') for m in network.modules())
+    bit_width = 8 if is_quantized else 32
 
-    # Set the bit-width based on whether the model is quantized
-    bit_width = 8 if is_quantized else 32  # 8 bits for quantized models, 32 bits for floating-point models
+    # Print model parameters for debugging
+    print("Model parameters before creating fault list:")
+    for name, param in network.named_parameters():
+        print(f"{name}: {param.shape}")
 
-    # Create a list of layer dimensions and parameters
     layer_params_list = [(name, param.numel()) for name, param in network.named_parameters() if len(param.size()) >= 2]
     layer_dimensions_list = [(name, np.array(param.size())) for name, param in network.named_parameters() if len(param.size()) >= 2]
 
     total_params = sum(param.numel() for _, param in network.named_parameters() if len(param.size()) >= 2)
     print(f"Total parameters: {total_params}")
 
-    # Calculate the total number of bits in the model
     total_bits = total_params * bit_width
     print(f"Total bits in the model: {total_bits}")
 
-    # Calculate the number of faults to inject
     p = SETTINGS.probability
     e = SETTINGS.error_margin
     t = SETTINGS.confidence_constant
-    N = total_bits * 2  # Total bits * 2 (for bit flips)
+    N = total_bits * 2
 
     faults_to_inject = round(N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p))))
     print(f"Faults to inject: {faults_to_inject}")
 
-    # Distribute faults across layers
     faults_to_inject_list = [(layer_name, round((params * bit_width * faults_to_inject) / total_bits)) for layer_name, params in layer_params_list]
 
-    # Generate the fault list CSV
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
     csv_filename = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
     header = ['Injection', 'Layer', 'TensorIndex', 'Bit']
@@ -891,9 +893,7 @@ def fault_list_gen():
                         width_index = random.randint(0, layer_dimensions[1] - 1)
                         tensor_index = f'({height_index}, {width_index})'
 
-                    bit_flip = random.randint(0, bit_width - 1)  # Bit flip within the bit-width of the model
-
-                    # Check if the combination is unique
+                    bit_flip = random.randint(0, bit_width - 1)
                     layer_name_no_weight = layer_name.replace('.weight', '')
                     index_key = (layer_name_no_weight, tensor_index, bit_flip)
                     if index_key not in used_indices:
