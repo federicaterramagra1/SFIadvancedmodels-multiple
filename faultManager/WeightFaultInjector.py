@@ -1,15 +1,13 @@
 import struct
 import torch
-import copy
 
 class WeightFaultInjector:
     def __init__(self, network):
         self.network = network.module if hasattr(network, 'module') else network
-        self.golden_parameters = copy.deepcopy(network.state_dict())
         self.layer_name = None
         self.tensor_index = None
         self.bit = None
-        self.golden_value = None
+        self.golden_parameters = {name: param.clone() for name, param in self.network.state_dict().items()}
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         for fault in faults:
@@ -92,16 +90,4 @@ class WeightFaultInjector:
             print(f"Unexpected error: {e}")
 
     def restore_golden(self):
-        for name, param in self.network.named_parameters():
-            if 'packed_params' in name:
-                try:
-                    packed_params = self.golden_parameters[name]
-                    weights, biases, zero_points, scales = packed_params
-                    param.data.copy_(weights)
-                    if param.bias is not None:
-                        param.bias.copy_(biases)
-                except IndexError:
-                    print(f"Warning: Packed parameters for layer '{name}' do not have the expected format. Skipping restore for this layer.")
-                    continue
-            else:
-                param.data.copy_(self.golden_parameters[name])
+        self.network.load_state_dict(self.golden_parameters)
