@@ -7,6 +7,13 @@ from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition, fault_list_gen, csv_summary
 
+# Function to print layer weight dimensions for validation
+def print_layer_dimensions(network):
+    for name, param in network.named_parameters():
+        if 'weight' in name:
+            print(f"Layer {name} weight shape: {param.shape}")
+
+
 
 def main():
     torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if you're on an x86 CPU
@@ -35,8 +42,11 @@ def main():
                             dataset_name=SETTINGS.DATASET)
 
         # Debugging: Print the network and check if it supports quantization
-        #print(network)
-        print(f"Does the network support quantization? {hasattr(network, 'quantize') and callable(network.quantize)}")
+        # Print network details
+        print(f"Network structure:\n{network}")
+
+        # Print layer weight dimensions for validation
+        print_layer_dimensions(network)
 
         # Apply quantization if supported
         if hasattr(network, 'quantize') and callable(network.quantize):

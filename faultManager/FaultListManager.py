@@ -141,11 +141,17 @@ class FLManager:
             else:
                 weight_tensor = state_dict[f"{fault.layer_name}.weight"]
 
-            print(f"Validating fault for layer '{fault.layer_name}' with index {fault.tensor_index}.")  # Debug print
+            print(f"Validating fault for layer '{fault.layer_name}' with index {fault.tensor_index} and weight tensor shape {weight_tensor.shape}.")  
 
-            if all(index < dim for index, dim in zip(fault.tensor_index, weight_tensor.shape)):
+            # Validate tensor indices
+            if all(0 <= index < dim for index, dim in zip(fault.tensor_index, weight_tensor.shape)):
                 valid_fault_list.append(fault)
             else:
                 print(f"Skipping invalid fault with index {fault.tensor_index} for layer '{fault.layer_name}'.")
 
         return valid_fault_list
+
+
+
+
+
