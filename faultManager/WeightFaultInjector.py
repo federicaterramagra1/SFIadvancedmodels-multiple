@@ -7,17 +7,16 @@ class WeightFaultInjector:
         self.layer_name = None
         self.tensor_index = None
         self.bit = None
-        self.golden_parameters = self.clone_state_dict(network.state_dict())
+        self.golden_parameters = self.clone_state_dict(self.network.state_dict())
 
     def clone_state_dict(self, state_dict):
         """Clone the state dictionary, handling only tensor parameters."""
-        return {name: param.clone() if isinstance(param, torch.Tensor) else param for name, param in state_dict.items()}
+        return {name: param.clone() for name, param in state_dict.items() if isinstance(param, torch.Tensor)}
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         for fault in faults:
             if fault.layer_name.startswith('module.'):
                 fault.layer_name = fault.layer_name.replace('module.', '')
-            print(f"Injecting fault in layer: {fault.layer_name}")  
             self.inject_fault(fault, fault_mode)
 
     def inject_fault(self, fault, fault_mode='stuck-at'):
@@ -47,12 +46,12 @@ class WeightFaultInjector:
                 else:
                     weight_tensor = state_dict[f"{layer_name}.weight"]
 
+                # Validate tensor index
                 if any(index >= dim for index, dim in zip(tensor_index, weight_tensor.shape)):
                     print(f"ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}'.")
                     return
 
-                print(f"Accessing layer: {layer_name}")  
-                print(f"Original weight: {weight_tensor[tensor_index].item()}")  
+                print(f"Accessing layer: {layer_name}")
                 weight_float = weight_tensor[tensor_index].item()
                 weight_bytes = struct.pack('f', weight_float)
                 weight_int = int.from_bytes(weight_bytes, byteorder='little')
@@ -70,7 +69,7 @@ class WeightFaultInjector:
 
                 self.golden_value = weight_tensor[tensor_index].clone()
                 weight_tensor[tensor_index] = torch.tensor(new_weight_float, dtype=weight_tensor.dtype, device=weight_tensor.device)
-                
+
                 if f"{layer_name}._packed_params._packed_params" in state_dict:
                     scales = packed_params[1]
                     zero_points = packed_params[2]
@@ -83,9 +82,9 @@ class WeightFaultInjector:
                     state_dict[f"{layer_name}._packed_params._packed_params"] = tuple(packed_params_list)
                 else:
                     state_dict[f"{layer_name}.weight"] = weight_tensor
-                
+
                 self.network.load_state_dict(state_dict)
-                print(f"Modified weight: {weight_tensor[tensor_index].item()}")  
+                print(f"Modified weight: {weight_tensor[tensor_index].item()}")
         except AttributeError:
             print(f"ERROR: Layer '{layer_name}' not found in the network.")
         except IndexError:
@@ -94,8 +93,10 @@ class WeightFaultInjector:
             print(f"Unexpected error: {e}")
 
     def restore_golden(self):
+        state_dict = self.network.state_dict()
         for name, param in self.golden_parameters.items():
-            if name in self.network.state_dict():
-                self.network.state_dict()[name].copy_(param)
+            if name in state_dict:
+                state_dict[name].copy_(param)
             else:
                 print(f"Warning: Layer '{name}' not found in the network. Skipping restore for this layer.")
+        self.network.load_state_dict(state_dict)
