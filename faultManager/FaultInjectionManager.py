@@ -1,23 +1,18 @@
-import csv
 import os
-import shutil
+import csv
+import numpy as np
+from tqdm import tqdm
+from ast import literal_eval as make_tuple
+from typing import Type, List
+from torch.nn import Module
+import SETTINGS
 import time
 import math
 from datetime import timedelta
-import copy
-
-import SETTINGS
-import numpy as np
-import torch
-from torch.nn import Module
 from torch.utils.data import DataLoader
-
-from tqdm import tqdm
-
-from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-
 from typing import List, Union
+import torch
 
 class FaultInjectionManager:
     def __init__(self,
@@ -87,6 +82,7 @@ class FaultInjectionManager:
                     if save_output:
                         self.faulty_output.append(faulty_scores.numpy())
 
+                    # Restore golden values after fault injection
                     for fault in batch_faults:
                         if fault_model == 'byzantine_neuron':
                             for injected_layer in injected_layers:
@@ -125,4 +121,3 @@ class FaultInjectionManager:
 
         self.total_inferences += 1
         return faulty_prediction_scores, faulty_prediction_indices, different_predictions
-

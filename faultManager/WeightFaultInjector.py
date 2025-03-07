@@ -6,7 +6,7 @@ class WeightFaultInjector:
         self.network = network.module if hasattr(network, 'module') else network
         self.layer_name = None
         self.tensor_index = None
-        self.bit = None
+        self.bits = None  # Update to handle multiple bits
         self.golden_values = {}  # Store original weights before modification
         self.has_restored = False  # Track if restore_golden() was already executed
 
@@ -19,19 +19,19 @@ class WeightFaultInjector:
     def inject_fault(self, fault, fault_mode='stuck-at'):
         self.layer_name = fault.layer_name
         self.tensor_index = fault.tensor_index
-        self.bit = fault.bit
+        self.bits = fault.bits  # Handle bits as a list
         if fault_mode == 'stuck-at':
-            self.inject_stuck_at(fault.layer_name, fault.tensor_index, fault.bit, fault.value)
+            self.inject_stuck_at(fault.layer_name, fault.tensor_index, fault.bits, fault.value)
         elif fault_mode == 'bit-flip':
-            self.inject_bit_flip(fault.layer_name, fault.tensor_index, fault.bit)
+            self.inject_bit_flip(fault.layer_name, fault.tensor_index, fault.bits)
         else:
             raise ValueError(f'Invalid fault mode {fault_mode}')
 
-    def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
-        self._modify_bit(layer_name, tensor_index, bit, mode="flip")
+    def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bits: list):
+        self._modify_bit(layer_name, tensor_index, bits, mode="flip")
 
-    def inject_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int):
-        self._modify_bit(layer_name, tensor_index, bit, mode="stuck", stuck_value=value)
+    def inject_stuck_at(self, layer_name: str, tensor_index: tuple, bits: list, value: int):
+        self._modify_bit(layer_name, tensor_index, bits, mode="stuck", stuck_value=value)
 
     def _modify_bit(self, layer_name: str, tensor_index: tuple, bits: list, mode="flip", stuck_value=None):
         try:
@@ -127,5 +127,3 @@ class WeightFaultInjector:
             self.has_restored = False  # Reset flag after successful restore
         else:
             print("⚠️ WARNING: Some golden values may not have been restored correctly.")
-
-

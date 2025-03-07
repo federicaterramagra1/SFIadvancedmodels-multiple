@@ -52,7 +52,7 @@ class FLManager:
                         injection=int(fault[0]),
                         layer_name=fault[1],
                         tensor_index=make_tuple(fault[2]),
-                        bit=int(fault[3])
+                        bits=list(map(int, fault[3].split(',')))  # Now support a list of bits (split by commas)
                     )
                     for fault in fault_list
                 ]
@@ -70,4 +70,3 @@ class FLManager:
         ]
 
         return grouped_fault_list
-
