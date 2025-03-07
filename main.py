@@ -77,17 +77,21 @@ def main():
 
         clean_ofm_manager.load_clean_output()
 
-        fault_list_generator = FLManager(network=network,
-                                         network_name=SETTINGS.NETWORK,
-                                         device=device,
-                                         module_class=SETTINGS.MODULE_CLASSES_FAULT_LIST,
-                                         input_size=loader.dataset[0][0].unsqueeze(0).shape,
-                                         save_ifm=True)
+        fault_list_generator = FLManager(
+            network=network,
+            network_name=SETTINGS.NETWORK,
+            device=device,
+            module_class=SETTINGS.MODULE_CLASSES_FAULT_LIST
+        )
 
-        fault_list, injectable_modules = get_fault_list(fault_model=SETTINGS.FAULT_MODEL,
-                                                        fault_list_generator=fault_list_generator)
+        fault_list, injectable_modules = get_fault_list(
+            fault_model=SETTINGS.FAULT_MODEL,
+            fault_list_generator=fault_list_generator
+        )
 
-        # Execute the fault injection campaign with the smart network
+        # Retrieve injectable modules after initialization
+        injectable_modules = fault_list_generator.injectable_output_modules_list
+
         fault_injection_executor = FaultInjectionManager(network=network,
                                                         network_name=SETTINGS.NETWORK,
                                                         device=device,
@@ -96,16 +100,13 @@ def main():
                                                         injectable_modules=injectable_modules,
                                                         num_faults_to_inject=SETTINGS.NUM_FAULTS_TO_INJECT)
 
-                                                        
         fault_injection_executor.run_faulty_campaign_on_weight(
-            fault_model='stuck-at_params',
+            fault_model=SETTINGS.FAULT_MODEL,
             fault_list=fault_list,
             first_batch_only=False,
-            force_n=None,
-            save_output=True,
-            save_ofm=False,
-            ofm_folder=None
+            save_output=True
         )
+
     else:
         print('Fault injection is disabled')
         

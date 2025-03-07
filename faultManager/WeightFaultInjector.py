@@ -4,6 +4,10 @@ import torch
 class WeightFaultInjector:
     def __init__(self, network):
         self.network = network.module if hasattr(network, 'module') else network
+        self.layer_name = None
+        self.tensor_index = None
+        self.bit = None
+        self.golden_values = {}  # Initialize golden values dictionary
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         for fault in faults:  
@@ -23,28 +27,35 @@ class WeightFaultInjector:
             raise ValueError(f'Invalid fault mode {fault_mode}')
 
 
-    def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int, key: tuple):
-        self.__modify_bit(layer_name, tensor_index, bit, mode="flip", key=key)
+    def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int):
+        self.__modify_bit(layer_name, tensor_index, bit, mode="flip")
 
-    def inject_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int, key: tuple):
-        self.__modify_bit(layer_name, tensor_index, bit, mode="stuck", stuck_value=value, key=key)
+    def inject_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int):
+        self.__modify_bit(layer_name, tensor_index, bit, mode="stuck", stuck_value=value)
 
-    def __modify_bit(self, layer_name: str, tensor_index: tuple, bit: int, mode="flip", stuck_value=None, key=None):
+    def __modify_bit(self, layer_name: str, tensor_index: tuple, bit: int, mode="flip", stuck_value=None):
         try:
             with torch.no_grad():
                 state_dict = self.network.state_dict()
-                if f"{layer_name}._packed_params._packed_params" in state_dict:
-                    packed_params = state_dict[f"{layer_name}._packed_params._packed_params"]
-                    weight_tensor = packed_params[0].dequantize()
-                else:
-                    weight_tensor = state_dict[f"{layer_name}.weight"]
 
-                if any(index >= dim for index, dim in zip(tensor_index, weight_tensor.shape)):
-                    print(f"ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}'.")
+                # Adjust layer name if inside QuantWrapper
+                if f"module.{layer_name}.weight" in state_dict:
+                    layer_name = f"module.{layer_name}"
+
+                if f"{layer_name}.weight" not in state_dict:
+                    print(f"ERROR: Layer '{layer_name}' not found in the network.")
                     return
 
-                print(f"Accessing layer: {layer_name}")
+                weight_tensor = state_dict[f"{layer_name}.weight"]
+
+                # Store the golden value before modifying
+                if (layer_name, tensor_index) not in self.golden_values:
+                    self.golden_values[(layer_name, tensor_index)] = weight_tensor[tensor_index].clone()
+
+                print(f"Accessing layer: {layer_name}")  
                 print(f"Original weight: {weight_tensor[tensor_index].item()}")
+
+                # Convert weight to integer format for bit manipulation
                 weight_float = weight_tensor[tensor_index].item()
                 weight_bytes = struct.pack('f', weight_float)
                 weight_int = int.from_bytes(weight_bytes, byteorder='little')
@@ -60,27 +71,12 @@ class WeightFaultInjector:
                 new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
                 new_weight_float = struct.unpack('f', new_weight_bytes)[0]
 
-                # Store the golden value if not already stored
-                if key not in self.golden_values:
-                    self.golden_values[key] = weight_tensor[tensor_index].clone()
-
                 weight_tensor[tensor_index] = torch.tensor(new_weight_float, dtype=weight_tensor.dtype, device=weight_tensor.device)
-
-                if f"{layer_name}._packed_params._packed_params" in state_dict:
-                    scales = packed_params[1]
-                    zero_points = packed_params[2]
-                    axis = packed_params[3]
-                    dtype = packed_params[4]
-                    packed_params_list = [
-                        torch.quantize_per_channel(weight_tensor, scales, zero_points, axis, dtype),
-                        scales, zero_points, axis, dtype
-                    ]
-                    state_dict[f"{layer_name}._packed_params._packed_params"] = tuple(packed_params_list)
-                else:
-                    state_dict[f"{layer_name}.weight"] = weight_tensor
-
+                
                 self.network.load_state_dict(state_dict)
-                print(f"Modified weight: {weight_tensor[tensor_index].item()}")
+
+                print(f"Modified weight: {weight_tensor[tensor_index].item()}")  
+
         except AttributeError:
             print(f"ERROR: Layer '{layer_name}' not found in the network.")
         except IndexError:
@@ -90,33 +86,31 @@ class WeightFaultInjector:
 
     def restore_golden(self):
         if not self.golden_values:
-            print('CRITICAL ERROR: impossible to restore the golden value before setting a fault')
+            print('CRITICAL ERROR: No golden values stored, skipping restore.')
             return
-        state_dict = self.network.state_dict()
-        for key, golden_value in self.golden_values.items():
-            layer_name, tensor_index, _ = key
-            if f"{layer_name}._packed_params._packed_params" in state_dict:
-                packed_params = state_dict[f"{layer_name}._packed_params._packed_params"]
-                weight_tensor = packed_params[0].dequantize()
-            else:
-                weight_tensor = state_dict[f"{layer_name}.weight"]
 
+        state_dict = self.network.state_dict()
+
+        for (layer_name, tensor_index), golden_value in self.golden_values.items():
+            # Adjust layer name for QuantWrapper
+            if f"module.{layer_name}.weight" in state_dict:
+                layer_name = f"module.{layer_name}"
+
+            if f"{layer_name}.weight" not in state_dict:
+                print(f"ERROR: Layer '{layer_name}' not found in the network.")
+                continue
+
+            weight_tensor = state_dict[f"{layer_name}.weight"]
+            
             if any(index >= dim for index, dim in zip(tensor_index, weight_tensor.shape)):
                 print(f"ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}'.")
                 continue
 
+            # ✅ Restore the golden value
             weight_tensor[tensor_index] = golden_value
-            if f"{layer_name}._packed_params._packed_params" in state_dict:
-                scales = packed_params[1]
-                zero_points = packed_params[2]
-                axis = packed_params[3]
-                dtype = packed_params[4]
-                packed_params_list = [
-                    torch.quantize_per_channel(weight_tensor, scales, zero_points, axis, dtype),
-                    scales, zero_points, axis, dtype
-                ]
-                state_dict[f"{layer_name}._packed_params._packed_params"] = tuple(packed_params_list)
-            else:
-                state_dict[f"{layer_name}.weight"] = weight_tensor
+
             self.network.load_state_dict(state_dict)
-            print(f"Restored weight to golden value: {weight_tensor[tensor_index].item()}")
+            print(f"Restored weight at {tensor_index} in layer '{layer_name}' to {golden_value.item()}")
+
+        # ✅ Clear golden values after restoring
+        self.golden_values.clear()

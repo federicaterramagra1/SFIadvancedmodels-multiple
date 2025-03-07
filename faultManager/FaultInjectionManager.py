@@ -58,7 +58,7 @@ class FaultInjectionManager:
             if force_n is not None:
                 fault_list = fault_list[:force_n]
 
-            fault_list = sorted(fault_list, key=lambda x: x.injection)
+            fault_list = sorted(fault_list, key=lambda x: x[0].injection if isinstance(x, list) and len(x) > 0 else float('inf'))
 
             start_time = time.time()
             accuracy_dict = dict()
@@ -103,4 +103,26 @@ class FaultInjectionManager:
         return str(timedelta(seconds=elapsed)), total_iterations
 
     def __inject_fault_on_weight(self, faults, fault_mode='stuck-at'):
-        self.weight_fault_injector.inject_faults(faults, fault_mode=fault_mode)
+        # Flatten the list of faults before passing it to inject_faults()
+        flattened_faults = [fault for batch in faults for fault in batch] if isinstance(faults[0], list) else faults
+        self.weight_fault_injector.inject_faults(flattened_faults, fault_mode=fault_mode)
+    
+    def __run_inference_on_batch(self, batch_id: int, data: torch.Tensor):
+        try:
+            network_output = self.network(data)
+            faulty_prediction = torch.topk(network_output, k=1)
+            clean_prediction = torch.topk(self.clean_output[batch_id], k=1)
+
+            different_predictions = int(torch.ne(faulty_prediction.indices, clean_prediction.indices).sum())
+            faulty_prediction_scores = network_output
+            faulty_prediction_indices = [int(fault) for fault in faulty_prediction.indices]
+
+        except RuntimeError as e:
+            print(f'FaultInjectionManager: Skipped inference {self.total_inferences} in batch {batch_id}')
+            print(e)
+            self.skipped_inferences += 1
+            return None, None, None
+
+        self.total_inferences += 1
+        return faulty_prediction_scores, faulty_prediction_indices, different_predictions
+
