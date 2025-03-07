@@ -61,9 +61,8 @@ class FLManager:
                     WeightFault(
                         injection=int(fault[0]),
                         layer_name=fault[1],
-                        tensor_index=make_tuple(fault[2]),  # Make sure this index matches your weights' shape
-                        # Handle multiple bits for each fault. If NUM_FAULTS_TO_INJECT is 2, inject 2 bits per weight
-                        bits = list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]  # Take exactly NUM_FAULTS_TO_INJECT bits
+                        tensor_index=make_tuple(fault[2]),  
+                        bits=list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]  
                     )
                     for fault in fault_list
                 ]
@@ -73,11 +72,11 @@ class FLManager:
             print(f'Fault list file not found: {SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}')
             exit(-1)
 
-        # Group the faults into batches for multiple fault injections
         grouped_fault_list = [
-            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT]  # Group faults into batches based on the injection size
+            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT] 
             for i in range(0, len(fault_list), SETTINGS.NUM_FAULTS_TO_INJECT)
         ]
 
         return grouped_fault_list
+
 

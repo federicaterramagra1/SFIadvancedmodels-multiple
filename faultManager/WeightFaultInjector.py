@@ -14,7 +14,14 @@ class WeightFaultInjector:
         for fault in faults:
             if fault.layer_name.startswith('module.'):
                 fault.layer_name = fault.layer_name.replace('module.', '')
-            self.inject_fault(fault, fault_mode)
+
+            if fault_mode == 'stuck-at':
+                self.inject_stuck_at(fault.layer_name, fault.tensor_index, fault.bits, fault.value)
+            elif fault_mode == 'bit-flip':
+                self.inject_bit_flip(fault.layer_name, fault.tensor_index, fault.bits)
+            else:
+                raise ValueError(f'Invalid fault mode {fault_mode}')
+
 
     def inject_fault(self, fault, fault_mode='stuck-at'):
         self.layer_name = fault.layer_name
@@ -84,6 +91,7 @@ class WeightFaultInjector:
 
         except Exception as e:
             print(f" Unexpected error in _modify_bit: {e}")
+
 
     def restore_golden(self):
         if not self.golden_values:

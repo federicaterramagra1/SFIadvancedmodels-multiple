@@ -230,10 +230,12 @@ def get_fault_list(fault_model: str,
     if fault_model == 'byzantine_neuron':
         fault_list = fault_list_generator.get_neuron_fault_list()
     elif fault_model == 'stuck-at_params':
-        # Ensure that we get the weight faults with the list of bits
+        fault_list = fault_list_generator.get_weight_fault_list()
+    elif fault_model == 'bit-flip':
         fault_list = fault_list_generator.get_weight_fault_list()
     else:
         raise ValueError(f'Invalid fault model {fault_model}')
+
 
     injectable_modules = fault_list_generator.injectable_output_modules_list
 
@@ -600,10 +602,17 @@ def ensure_file_exists(file_path, default_data=None):
 
 def count_batch(folder, path):
     try:
+        # Ensure directory exists before listing files
+        if not os.path.exists(folder):
+            print(f"Error: Directory {folder} does not exist.")
+            return 0, 0, 0  # Return default values to prevent crashes
+
         files = os.listdir(folder)
-        files = [f for f in files if os.path.isfile(os.path.join(folder, f))]
-        loaded_file = np.load(path, allow_pickle=True)  # Aggiungi allow_pickle=True
-        
+        if not files:
+            print(f"Warning: No files found in {folder}.")
+            return 0, 0, 0  # Handle empty directories gracefully
+
+        loaded_file = np.load(path, allow_pickle=True)
         if loaded_file.size == 0:
             print(f"Warning: {path} is empty. Skipping.")
             return 0, 0, 0  # Skip if empty
@@ -611,12 +620,17 @@ def count_batch(folder, path):
         n_outputs = loaded_file.shape[2]
         n_faults = loaded_file.shape[0]
         return len(files), n_outputs, n_faults
+
+    except FileNotFoundError:
+        print(f"Error: File not found {path}.")
+        return 0, 0, 0
     except EOFError:
         print(f"Error: No data left in file {path}. Skipping.")
         return 0, 0, 0
     except Exception as e:
-        print(f"Unexpected error with file {path}: {e}")
+        print(f"Unexpected error in count_batch: {e}")
         return 0, 0, 0
+
 
 
 def output_definition(test_loader, batch_size):
@@ -657,15 +671,6 @@ def output_definition(test_loader, batch_size):
 
     print('loading clean outputs...')
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
-
-    # load faulty tensor
-    def count_batch(folder, path):
-        files = os.listdir(folder)
-        files = [f for f in files if os.path.isfile(os.path.join(folder, f))]
-        loaded_file = np.load(path)
-        n_outputs = loaded_file.shape[2]
-        n_faults = loaded_file.shape[0]
-        return len(files), n_outputs, n_faults
 
     # To define these paths check FaultInjectionManager.py to see the faulty output folder path
     batch_folder = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}'
@@ -761,6 +766,19 @@ def output_definition(test_loader, batch_size):
     print(f'% critical: {100*critical/(masked + not_critical + critical)} %')
     print(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %')
     
+    if masked + not_critical + critical == 0:
+        print("Warning: No faults were recorded, skipping percentage calculations.")
+        percent_masked = percent_not_critical = percent_critical = 0
+    else:
+        percent_masked = 100 * masked / (masked + not_critical + critical)
+        percent_not_critical = 100 * not_critical / (masked + not_critical + critical)
+        percent_critical = 100 * critical / (masked + not_critical + critical)
+
+    print(f'% masked faults: {percent_masked} %')
+    print(f'% not critical faults: {percent_not_critical} %')
+    print(f'% critical faults: {percent_critical} %')
+
+
     total_outputs = masked + not_critical + critical
     percent_masked = 100 * masked / total_outputs
     percent_not_critical = 100 * not_critical / total_outputs

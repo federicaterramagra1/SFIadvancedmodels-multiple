@@ -79,26 +79,24 @@ class FaultInjectionManager:
                 pbar = tqdm(range(0, len(fault_list), self.num_faults_to_inject), colour='green', desc=f'FI on b {batch_id}')
                 for i in pbar:
                     batch_faults = fault_list[i:i + self.num_faults_to_inject]
-                    if fault_model == 'byzantine_neuron':
-                        injected_layers = [self.__inject_fault_on_neuron(fault=f) for f in batch_faults]
-                    elif fault_model == 'stuck-at_params':
-                        self.__inject_fault_on_weight(batch_faults, fault_mode='stuck-at')
+                    if SETTINGS.FAULT_MODEL == 'stuck-at_params':
+                        internal_fault_mode = 'stuck-at'
+                    elif SETTINGS.FAULT_MODEL == 'bit-flip':
+                        internal_fault_mode = 'flip'
                     else:
-                        raise ValueError(f'Invalid fault model {fault_model}')
+                        raise ValueError(f'Unknown FAULT_MODEL: {SETTINGS.FAULT_MODEL}')
+
+                    self.__inject_fault_on_weight(batch_faults, fault_mode=internal_fault_mode)
 
                     faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id, data=data)
-                    accuracy_batch_dict[i] = float(torch.sum(target.eq(torch.tensor(faulty_indices))) / len(target))
-
+                    
+                    # You MUST save the faulty output explicitly here:
                     if save_output:
-                        self.faulty_output.append(faulty_scores.numpy())
-
+                        self.save_faulty_outputs(faulty_scores.cpu().numpy(), batch_id)
+                    
                     # Restore golden values after fault injection
-                    for fault in batch_faults:
-                        if fault_model == 'byzantine_neuron':
-                            for injected_layer in injected_layers:
-                                injected_layer.clean_fault()
-                        elif fault_model == 'stuck-at_params':
-                            self.weight_fault_injector.restore_golden()
+                    self.weight_fault_injector.restore_golden()
+
 
                     total_iterations += 1
 
@@ -132,10 +130,9 @@ class FaultInjectionManager:
         self.total_inferences += 1
         return faulty_prediction_scores, faulty_prediction_indices, different_predictions
     
-    def save_faulty_outputs(self, faulty_tensor_data, batch_id):
-        batch_folder = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/batch_{batch_id}"
-        ensure_directory_exists(batch_folder)  # Ensure the directory exists
-
+    def save_faulty_outputs(self, faulty_output_data, batch_id):
+        batch_folder = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}"
+        os.makedirs(batch_folder, exist_ok=True)
         output_file_path = f"{batch_folder}/batch_{batch_id}.npy"
-        print(f"Saving faulty output to {output_file_path}")
-        np.save(output_file_path, faulty_tensor_data)
+        np.save(output_file_path, faulty_output_data)
+        print(f"Saved faulty output to {output_file_path}")
