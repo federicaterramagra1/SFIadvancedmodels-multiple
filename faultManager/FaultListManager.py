@@ -52,7 +52,7 @@ class FLManager:
                         injection=int(fault[0]),
                         layer_name=fault[1],
                         tensor_index=make_tuple(fault[2]),
-                        # Creating a list of bits based on NUM_FAULTS_TO_INJECT in settings
+                        # Creating a list of bits based on the fault list column (split by commas)
                         bits=list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]  # Slice based on NUM_FAULTS_TO_INJECT
                     )
                     for fault in fault_list
@@ -66,9 +66,8 @@ class FLManager:
 
         # Group the faults into batches for multiple fault injections
         grouped_fault_list = [
-            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT]  # Group faults into batches
+            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT]  # Group faults into batches based on the injection size
             for i in range(0, len(fault_list), SETTINGS.NUM_FAULTS_TO_INJECT)
         ]
 
         return grouped_fault_list
-

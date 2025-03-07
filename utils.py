@@ -574,6 +574,37 @@ def load_from_dict(network, device, path, function=None):
     print('state_dict loaded into network')
     
     
+def ensure_directory_exists(directory):
+    """Check if the directory exists and create it if not."""
+    if not os.path.exists(directory):
+        print(f"Creating missing directory: {directory}")
+        os.makedirs(directory)
+
+def ensure_file_exists(file_path, default_data=None):
+    """Check if the file exists and create it with default_data if not."""
+    if not os.path.exists(file_path):
+        print(f"Creating missing file: {file_path}")
+        if default_data is not None:
+            np.save(file_path, default_data)  # Save numpy array with default_data
+        else:
+            # If no default data, create an empty file
+            open(file_path, 'w').close()
+
+def count_batch(folder, path):
+    try:
+        # Ensure the file exists and isn't empty
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            loaded_file = np.load(path)
+            n_outputs = loaded_file.shape[2]
+            n_faults = loaded_file.shape[0]
+            return len(os.listdir(folder)), n_outputs, n_faults
+        else:
+            print(f"Warning: {path} is empty or doesn't exist. Skipping.")
+            return 0, 0, 0  # Skip if file is empty or doesn't exist
+    except Exception as e:
+        print(f"Error while reading {path}: {e}")
+        return 0, 0, 0  # Skip on error
+
 def output_definition(test_loader, batch_size):
     
     masked = 0
@@ -584,9 +615,9 @@ def output_definition(test_loader, batch_size):
     batch_info_list = []
 
     pbar = tqdm(test_loader,
-            colour='green',
-            desc=f'Saving test labels from {SETTINGS.DATASET_NAME} {SETTINGS.NETWORK_NAME} {batch_size}',
-            ncols=shutil.get_terminal_size().columns)
+                colour='green',
+                desc=f'Saving test labels from {SETTINGS.DATASET_NAME} {SETTINGS.NETWORK_NAME} {batch_size}',
+                ncols=shutil.get_terminal_size().columns)
     
     for batch_id, batch in enumerate(pbar):
         _, label = batch
@@ -655,11 +686,14 @@ def output_definition(test_loader, batch_size):
 
     print('shape of faulty tensor:', faulty_tensor_data.shape)
 
+    print('faulty outputs loaded')
+
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
     
     clean_output_match_counter = 0
     faulty_output_match_counter = 0
 
+    # open the .csv
     with open(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv', mode='a') as file_csv:
 
         csv_writer = csv.writer(file_csv)
@@ -668,11 +702,11 @@ def output_definition(test_loader, batch_size):
 
         print(f'faults: {n_faults}, batches: {number_of_batch}')
 
-        # Inside faults
+        # inside faults
         for z in tqdm(range(dim1), desc="output definition progress"):
-            # Inside batches
+            # inside batches
             for i in range(start_batch, dim2):
-                # Inside images
+                # inside images
                 for j in range(min(dim3, loaded_clean_output[i].shape[0])):
                     clean_output_argmax = np.argmax(loaded_clean_output[i][j, :])
                     faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])    
@@ -683,7 +717,6 @@ def output_definition(test_loader, batch_size):
                     if faulty_output_match:
                         faulty_output_match_counter += 1
 
-                    # Comparing and saving in the .csv the results
                     if np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
                         masked += 1
                         output_results_list.append('0')
@@ -711,7 +744,6 @@ def output_definition(test_loader, batch_size):
         not_critical = output_count[1]
         critical = output_count[2]
  
-    # Print the results
     print(f'total outputs: {masked + not_critical + critical}')
     print('masked:', masked)
     print(f'% masked faults: {100*masked/(masked + not_critical + critical)} %')
@@ -735,13 +767,13 @@ def output_definition(test_loader, batch_size):
         file.write(f'SDC-1: {critical}\n')
         file.write(f'% critical: {percent_critical} %\n')
         file.write(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %\n')
+    
 
     if SETTINGS.RAM_LIMIT:
         del df
         del output_count
 
     return output_results_list
-
 
 
 def csv_summary():

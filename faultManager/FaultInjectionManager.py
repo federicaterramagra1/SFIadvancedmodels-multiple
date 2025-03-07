@@ -64,11 +64,9 @@ class FaultInjectionManager:
                 accuracy_batch_dict = dict()
                 accuracy_dict[batch_id] = accuracy_batch_dict
 
-                pbar = tqdm(range(0, len(fault_list), self.num_faults_to_inject), colour='green',
-                            desc=f'FI on b {batch_id}')
+                pbar = tqdm(range(0, len(fault_list), self.num_faults_to_inject), colour='green', desc=f'FI on b {batch_id}')
                 for i in pbar:
                     batch_faults = fault_list[i:i + self.num_faults_to_inject]
-
                     if fault_model == 'byzantine_neuron':
                         injected_layers = [self.__inject_fault_on_neuron(fault=f) for f in batch_faults]
                     elif fault_model == 'stuck-at_params':
@@ -98,6 +96,7 @@ class FaultInjectionManager:
         elapsed = math.ceil(time.time() - start_time)
         return str(timedelta(seconds=elapsed)), total_iterations
 
+
     def __inject_fault_on_weight(self, faults, fault_mode='stuck-at'):
         # Flatten the list of faults before passing it to inject_faults()
         flattened_faults = [fault for batch in faults for fault in batch] if isinstance(faults[0], list) else faults
@@ -121,3 +120,8 @@ class FaultInjectionManager:
 
         self.total_inferences += 1
         return faulty_prediction_scores, faulty_prediction_indices, different_predictions
+    
+    def save_faulty_outputs(self, faulty_tensor_data, batch_id):
+        output_file_path = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/batch_{batch_id}.npy"
+        print(f"Saving faulty output to {output_file_path}")
+        np.save(output_file_path, faulty_tensor_data)
