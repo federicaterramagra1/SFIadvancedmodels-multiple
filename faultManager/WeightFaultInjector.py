@@ -1,27 +1,27 @@
+import struct
+import torch
+
 class WeightFaultInjector:
     def __init__(self, network):
         self.network = network.module if hasattr(network, 'module') else network
-        self.golden_values = {}  # Dictionary to store golden values for each fault
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
-        for fault in faults:
+        for fault in faults:  
             if fault.layer_name.startswith('module.'):
                 fault.layer_name = fault.layer_name.replace('module.', '')
-            print(f"Injecting fault in layer: {fault.layer_name}")
             self.inject_fault(fault, fault_mode)
 
     def inject_fault(self, fault, fault_mode='stuck-at'):
-        layer_name = fault.layer_name
-        tensor_index = fault.tensor_index
-        bit = fault.bit
-        key = (layer_name, tensor_index, bit)  # Unique key for each fault
-
+        self.layer_name = fault.layer_name
+        self.tensor_index = fault.tensor_index
+        self.bit = fault.bit
         if fault_mode == 'stuck-at':
-            self.inject_stuck_at(layer_name, tensor_index, bit, fault.value, key)
+            self.inject_stuck_at(fault.layer_name, fault.tensor_index, fault.bit, fault.value)
         elif fault_mode == 'bit-flip':
-            self.inject_bit_flip(layer_name, tensor_index, bit, key)
+            self.inject_bit_flip(fault.layer_name, fault.tensor_index, fault.bit)
         else:
             raise ValueError(f'Invalid fault mode {fault_mode}')
+
 
     def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bit: int, key: tuple):
         self.__modify_bit(layer_name, tensor_index, bit, mode="flip", key=key)

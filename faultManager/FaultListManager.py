@@ -102,30 +102,11 @@ class FLManager:
             print('Fault list not found')
             exit(-1)
 
-    def get_weight_fault_list(self) -> List[WeightFault]:
-        """
-        Get the fault list for the weights, ensuring valid indices.
-        """
-        cwd = os.getcwd()
-
-        try:
-            with open(f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}', newline='') as f_list:
-                reader = csv.reader(f_list)
-                fault_list = list(reader)[1:]
-                fault_list = [WeightFault(injection=int(fault[0]),
-                                          layer_name=fault[1],
-                                          tensor_index=make_tuple(fault[2]),
-                                          bit=int(fault[-1])) for fault in fault_list]
-
-            print('Fault list loaded from file')
-            # Validate the fault list
-            valid_fault_list = self.validate_fault_list(fault_list)
-            self.fault_list = valid_fault_list
-            return valid_fault_list
-
-        except FileNotFoundError:
-            print(f'Fault list not found: {SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}')
-            exit(-1)
+    def get_weight_fault_list(self) -> List[List[WeightFault]]:
+        fault_list = super().get_weight_fault_list()
+        grouped_fault_list = [fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT]
+                              for i in range(0, len(fault_list), SETTINGS.NUM_FAULTS_TO_INJECT)]
+        return grouped_fault_list
 
     def validate_fault_list(self, fault_list: List[WeightFault]) -> List[WeightFault]:
         valid_fault_list = []
