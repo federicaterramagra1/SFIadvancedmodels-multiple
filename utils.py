@@ -620,7 +620,6 @@ def count_batch(folder, path):
 
 
 def output_definition(test_loader, batch_size):
-    
     masked = 0
     critical = 0
     not_critical = 0
@@ -628,10 +627,7 @@ def output_definition(test_loader, batch_size):
     output_results_list = []
     batch_info_list = []
 
-    pbar = tqdm(test_loader,
-                colour='green',
-                desc=f'Saving test labels from {SETTINGS.DATASET_NAME} {SETTINGS.NETWORK_NAME} {batch_size}',
-                ncols=shutil.get_terminal_size().columns)
+    pbar = tqdm(test_loader, colour='green', desc=f'Saving test labels from {SETTINGS.DATASET_NAME} {SETTINGS.NETWORK_NAME} {batch_size}', ncols=shutil.get_terminal_size().columns)
     
     for batch_id, batch in enumerate(pbar):
         _, label = batch
@@ -674,7 +670,7 @@ def output_definition(test_loader, batch_size):
     # To define these paths check FaultInjectionManager.py to see the faulty output folder path
     batch_folder = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}'
     batch_path = f'{batch_folder}' + '/batch_0.npy'
-    number_of_batch, n_outputs, n_faults = count_batch(batch_folder, batch_path)
+    number_of_batch, n_outputs, n_faults = count_batch(batch_folder,  batch_path)
 
     print(f'number of batch: {number_of_batch}')
 
@@ -699,8 +695,6 @@ def output_definition(test_loader, batch_size):
         del loaded_faulty_output
 
     print('shape of faulty tensor:', faulty_tensor_data.shape)
-
-    print('faulty outputs loaded')
 
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
     
@@ -781,7 +775,6 @@ def output_definition(test_loader, batch_size):
         file.write(f'SDC-1: {critical}\n')
         file.write(f'% critical: {percent_critical} %\n')
         file.write(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %\n')
-    
 
     if SETTINGS.RAM_LIMIT:
         del df
