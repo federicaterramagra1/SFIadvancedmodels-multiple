@@ -65,7 +65,7 @@ class WeightFaultInjector:
 
                     # **Check for invalid values before assignment**
                     if torch.isnan(torch.tensor(new_weight_float)) or torch.isinf(torch.tensor(new_weight_float)):
-                        print(f"❌ ERROR: Modified weight at {tensor_index} is invalid ({new_weight_float}). Skipping.")
+                        print(f" ERROR: Modified weight at {tensor_index} is invalid ({new_weight_float}). Skipping.")
                         return
 
                     scale = state_dict[f"{layer_name}.scale"]
@@ -82,19 +82,19 @@ class WeightFaultInjector:
                     self.network.load_state_dict(state_dict)
 
         except Exception as e:
-            print(f"❌ Unexpected error in _modify_bit: {e}")
+            print(f" Unexpected error in _modify_bit: {e}")
 
     def restore_golden(self):
         if not self.golden_values:
-            if not self.has_restored:  # Only log the error once
-                print("❌ CRITICAL ERROR: No golden values stored, skipping restore.")
-                self.has_restored = True  # Prevent repeated logging
+            if not self.has_restored:
+                print(" CRITICAL ERROR: No golden values stored, skipping restore.")
+                self.has_restored = True
             return
 
         state_dict = self.network.state_dict()
         total_restored = 0
 
-        print(f"🔄 Attempting to restore {len(self.golden_values)} golden values...")
+        print(f" Attempting to restore {len(self.golden_values)} golden values...")
 
         for (layer_name, tensor_index), golden_value in list(self.golden_values.items()):
             if f"{layer_name}._packed_params._packed_params" in state_dict:
@@ -103,7 +103,7 @@ class WeightFaultInjector:
             elif f"{layer_name}.weight" in state_dict:
                 weight_tensor = state_dict[f"{layer_name}.weight"]
             else:
-                print(f"❌ ERROR: Layer '{layer_name}' not found in state_dict.")
+                print(f"ERROR: Layer '{layer_name}' not found in state_dict.")
                 continue
 
             scale = state_dict[f"{layer_name}.scale"]
@@ -113,17 +113,14 @@ class WeightFaultInjector:
             weight_tensor[tensor_index] = quantized_weight.dequantize()
             total_restored += 1
 
-        #  REPACK THE QUANTIZED WEIGHTS BEFORE LOADING THEM
+        # Repack the quantized weights
         for name, module in self.network.named_modules():
             if isinstance(module, torch.ao.nn.quantized.Linear):
                 module._packed_params._packed_params = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
 
         self.network.load_state_dict(state_dict)
-        print(f"Successfully restored {total_restored} golden values.")
+        print(f" Successfully restored {total_restored} golden values.")
 
-        # Clear only if restoration happened
-        if total_restored > 0:
-            self.golden_values.clear()
-            self.has_restored = False  # Reset flag after successful restore
-        else:
-            print(" WARNING: Some golden values may not have been restored correctly.")
+        # Clear the golden values after restore to avoid repeated restore attempts
+        self.golden_values.clear()
+

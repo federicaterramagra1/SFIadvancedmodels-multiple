@@ -230,6 +230,7 @@ def get_fault_list(fault_model: str,
     if fault_model == 'byzantine_neuron':
         fault_list = fault_list_generator.get_neuron_fault_list()
     elif fault_model == 'stuck-at_params':
+        # Ensure that we get the weight faults with the list of bits
         fault_list = fault_list_generator.get_weight_fault_list()
     else:
         raise ValueError(f'Invalid fault model {fault_model}')
