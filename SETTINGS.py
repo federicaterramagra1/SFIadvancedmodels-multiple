@@ -38,7 +38,7 @@ FAULT_LIST_GENERATION = True
 FAULTS_INJECTION = True
 
 # 0 : masked, 1: non.critic, 2: critic
-FI_ANALYSIS = False
+FI_ANALYSIS = True
 FI_ANALYSIS_SUMMARY = True
 
 # ------------------------------------ FAULT LIST SETTINGS ------------------------------------
@@ -58,6 +58,7 @@ modules_to_fault = (torch.nn.Conv2d, torch.nn.Linear)
 
 FAULT_LIST_PATH = f'output/fault_list/{DATASET_NAME}/{NETWORK_NAME}/'
 FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
+
 
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 

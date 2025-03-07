@@ -750,6 +750,9 @@ def csv_summary():
     input_file_path1 = f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv'
     fault_list_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
     output_file_path = f'{SETTINGS.FI_SUM_ANALYSIS_PATH}'
+    print(f"FI_ANALYSIS_PATH: {SETTINGS.FI_ANALYSIS_PATH}")
+    print(f"Fault list path: {SETTINGS.FAULT_LIST_PATH}")
+    print(f"Summary output path: {SETTINGS.FI_SUM_ANALYSIS_PATH}")
 
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
 
