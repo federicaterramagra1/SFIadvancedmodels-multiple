@@ -42,7 +42,7 @@ class WeightFaultInjector:
                     weight_tensor = packed_params[0].dequantize()
 
                     if (layer_name, tensor_index) not in self.golden_values:
-                        print(f"🔄 Storing golden value for {layer_name} at {tensor_index}")
+                        print(f" Storing golden value for {layer_name} at {tensor_index}")
                         self.golden_values[(layer_name, tensor_index)] = weight_tensor[tensor_index].clone()
 
                     weight_float = weight_tensor[tensor_index].item()
@@ -113,17 +113,17 @@ class WeightFaultInjector:
             weight_tensor[tensor_index] = quantized_weight.dequantize()
             total_restored += 1
 
-        # ✅ REPACK THE QUANTIZED WEIGHTS BEFORE LOADING THEM
+        #  REPACK THE QUANTIZED WEIGHTS BEFORE LOADING THEM
         for name, module in self.network.named_modules():
             if isinstance(module, torch.ao.nn.quantized.Linear):
                 module._packed_params._packed_params = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
 
         self.network.load_state_dict(state_dict)
-        print(f"✅ Successfully restored {total_restored} golden values.")
+        print(f"Successfully restored {total_restored} golden values.")
 
-        # ✅ Clear only if restoration happened
+        # Clear only if restoration happened
         if total_restored > 0:
             self.golden_values.clear()
             self.has_restored = False  # Reset flag after successful restore
         else:
-            print("⚠️ WARNING: Some golden values may not have been restored correctly.")
+            print(" WARNING: Some golden values may not have been restored correctly.")

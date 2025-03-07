@@ -611,12 +611,10 @@ def output_definition(test_loader, batch_size):
     del batch_info_list
 
     # Load clean tensor
-    clean_output_path =SETTINGS.CLEAN_OUTPUT_FOLDER + '/clean_output.npy'
+    clean_output_path = SETTINGS.CLEAN_OUTPUT_FOLDER + '/clean_output.npy'
 
     print('loading clean outputs...')
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
-
-    # print(loaded_clean_output.shape)
 
     # load faulty tensor
     def count_batch(folder, path):
@@ -630,7 +628,7 @@ def output_definition(test_loader, batch_size):
     # To define these paths check FaultInjectionManager.py to see the faulty output folder path
     batch_folder = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}'
     batch_path = f'{batch_folder}' + '/batch_0.npy'
-    number_of_batch, n_outputs, n_faults = count_batch(batch_folder,  batch_path)
+    number_of_batch, n_outputs, n_faults = count_batch(batch_folder, batch_path)
 
     print(f'number of batch: {number_of_batch}')
 
@@ -638,35 +636,29 @@ def output_definition(test_loader, batch_size):
     dim1 = n_faults 
     dim2 = number_of_batch 
     start_batch = 0
-    # ram limit
     if SETTINGS.RAM_LIMIT:
         start_batch = SETTINGS.BATCH_START
         dim2 = SETTINGS.BATCH_END
     dim3 = int(batch_size) 
 
-    # batch_data_list = []
     faulty_tensor_data = np.zeros((n_faults, number_of_batch, dim3, n_outputs), dtype=np.float32)
     
     print('loading faulty outputs')
-    for i in tqdm(range(start_batch,dim2)):
+    for i in tqdm(range(start_batch, dim2)):
         
         file_name = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}' + f'/batch_{i}.npy'
         print(f'loading: batch_{i}.npy')
         loaded_faulty_output = np.load(file_name)
-        # batch_data_list.append(loaded_faulty_output)
         faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :] = loaded_faulty_output
         del loaded_faulty_output
 
     print('shape of faulty tensor:', faulty_tensor_data.shape)
-
-    print('faulty outputs loaded')
 
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
     
     clean_output_match_counter = 0
     faulty_output_match_counter = 0
 
-    # open the .csv
     with open(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv', mode='a') as file_csv:
 
         csv_writer = csv.writer(file_csv)
@@ -675,24 +667,22 @@ def output_definition(test_loader, batch_size):
 
         print(f'faults: {n_faults}, batches: {number_of_batch}')
 
-        #inside faults
+        # Inside faults
         for z in tqdm(range(dim1), desc="output definition progress"):
-            #inside batches
+            # Inside batches
             for i in range(start_batch, dim2):
-                # inside images
+                # Inside images
                 for j in range(min(dim3, loaded_clean_output[i].shape[0])):
                     clean_output_argmax = np.argmax(loaded_clean_output[i][j, :])
                     faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])    
 
                     clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
                     faulty_output_match = (faulty_output_argmax == clean_output_label)
-                  
                     
                     if faulty_output_match:
                         faulty_output_match_counter += 1
-                        
 
-                    # comparing and save in the .csv the results
+                    # Comparing and saving in the .csv the results
                     if np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
                         masked += 1
                         output_results_list.append('0')
@@ -708,7 +698,6 @@ def output_definition(test_loader, batch_size):
                         output_results_list.append('2')
                         csv_writer.writerow([z, i, j, '2'])
 
-
     del loaded_clean_output
     del faulty_tensor_data
 
@@ -721,7 +710,7 @@ def output_definition(test_loader, batch_size):
         not_critical = output_count[1]
         critical = output_count[2]
  
-    # print the results
+    # Print the results
     print(f'total outputs: {masked + not_critical + critical}')
     print('masked:', masked)
     print(f'% masked faults: {100*masked/(masked + not_critical + critical)} %')
@@ -731,7 +720,6 @@ def output_definition(test_loader, batch_size):
     print(f'% critical: {100*critical/(masked + not_critical + critical)} %')
     print(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %')
     
-    # statistics
     total_outputs = masked + not_critical + critical
     percent_masked = 100 * masked / total_outputs
     percent_not_critical = 100 * not_critical / total_outputs
@@ -746,17 +734,13 @@ def output_definition(test_loader, batch_size):
         file.write(f'SDC-1: {critical}\n')
         file.write(f'% critical: {percent_critical} %\n')
         file.write(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %\n')
-    
 
     if SETTINGS.RAM_LIMIT:
         del df
         del output_count
-        
-        
-        
-            
 
     return output_results_list
+
 
 
 def csv_summary():
@@ -814,7 +798,7 @@ def csv_summary():
 
     df2.to_csv(output_file_path, index=False)
     print(f"Summary CSV saved to {output_file_path}")
-    
+
 
 import numpy as np
 import random
@@ -822,6 +806,7 @@ import torch
 import csv
 import os
 import SETTINGS
+
 def fault_list_gen():
     random_seed = SETTINGS.SEED
     random.seed(random_seed)
@@ -893,9 +878,9 @@ def fault_list_gen():
                         width_index = random.randint(0, layer_dimensions[1] - 1)
                         tensor_index = f'({height_index}, {width_index})'
 
-                    bit_flip = random.randint(0, bit_width - 1)
+                    bit_flips = random.sample(range(bit_width), SETTINGS.NUM_FAULTS_TO_INJECT)
                     layer_name_no_weight = layer_name.replace('.weight', '')
-                    index_key = (layer_name_no_weight, tensor_index, bit_flip)
+                    index_key = (layer_name_no_weight, tensor_index, tuple(bit_flips))  # Store as tuple of bits
                     if index_key not in used_indices:
                         break
                     else:
@@ -907,7 +892,7 @@ def fault_list_gen():
                     break
 
                 used_indices.add(index_key)
-                csv_writer.writerow([row_number, layer_name_no_weight, tensor_index, bit_flip])
+                csv_writer.writerow([row_number, layer_name_no_weight, tensor_index, ','.join(map(str, bit_flips))])  # Write list of bits
                 row_number += 1
 
     print(f"Number of attempted indices: {counter}")

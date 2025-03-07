@@ -137,7 +137,7 @@ MODEL_PT_PATH = f'dlModels/{DATASET}/pretrained/{NETWORK}_{DATASET}.pt'
 MODEL_PTH_PATH = f'dlModels/{DATASET}/pretrained/{NETWORK}_{DATASET}.pth'
 
 # FAULT ANALYSIS PATHS
-FI_ANALYSIS_PATH = f'results/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/'
+FI_ANALYSIS_PATH = f'results_summary/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/'
 FI_SUM_ANALYSIS_PATH = f'./results_summary/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/{NETWORK}_summary.csv'
 
 
