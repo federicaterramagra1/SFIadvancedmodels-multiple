@@ -40,7 +40,9 @@ def main():
             network.to(device)
             network.quantize_model()
             print("Quantization completed. Model is now running on CPU.")
-            print("Quantized model state dict keys:", network.state_dict().keys())
+            
+            print("Available layers in state_dict():", network.state_dict().keys())
+
         else:
             print("The network does not support quantization. Skipping quantization.")
             
