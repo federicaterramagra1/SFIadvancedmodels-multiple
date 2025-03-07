@@ -8,6 +8,7 @@ class WeightFaultInjector:
         self.tensor_index = None
         self.bit = None
         self.golden_values = {}  # Store original weights before modification
+        self.has_restored = False  # Track if restore_golden() was already executed
 
     def inject_faults(self, faults: list, fault_mode='stuck-at'):
         for fault in faults:
@@ -32,120 +33,99 @@ class WeightFaultInjector:
     def inject_stuck_at(self, layer_name: str, tensor_index: tuple, bit: int, value: int):
         self._modify_bit(layer_name, tensor_index, bit, mode="stuck", stuck_value=value)
 
-    import math
-
-    def _modify_bit(self, layer_name: str, tensor_index: tuple, bit: int, mode="flip", stuck_value=None):
+    def _modify_bit(self, layer_name: str, tensor_index: tuple, bits: list, mode="flip", stuck_value=None):
         try:
             with torch.no_grad():
                 state_dict = self.network.state_dict()
-                print("🔍 Available layers in state_dict():", list(state_dict.keys()))
-
                 if f"{layer_name}._packed_params._packed_params" in state_dict:
                     packed_params = state_dict[f"{layer_name}._packed_params._packed_params"]
                     weight_tensor = packed_params[0].dequantize()
 
-                    print(f"✅ '{layer_name}._packed_params._packed_params' shape:", weight_tensor.shape)
-                    print(f"🔍 Attempting to access index: {tensor_index}")
+                    if (layer_name, tensor_index) not in self.golden_values:
+                        print(f"🔄 Storing golden value for {layer_name} at {tensor_index}")
+                        self.golden_values[(layer_name, tensor_index)] = weight_tensor[tensor_index].clone()
 
-                    if any(idx >= dim for idx, dim in zip(tensor_index, weight_tensor.shape)):
-                        print(f"❌ ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}._packed_params._packed_params'.")
+                    weight_float = weight_tensor[tensor_index].item()
+                    weight_bytes = struct.pack('f', weight_float)
+                    weight_int = int.from_bytes(weight_bytes, byteorder='little')
+
+                    # Modify multiple bits
+                    for bit in bits:
+                        if mode == "flip":
+                            weight_int ^= (1 << bit)  # Flip the bit
+                        elif mode == "stuck":
+                            if stuck_value == 1:
+                                weight_int |= (1 << bit)  # Set the bit to 1
+                            else:
+                                weight_int &= ~(1 << bit)  # Set the bit to 0
+
+                    # Convert modified bits back to float
+                    new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
+                    new_weight_float = struct.unpack('f', new_weight_bytes)[0]
+
+                    # **Check for invalid values before assignment**
+                    if torch.isnan(torch.tensor(new_weight_float)) or torch.isinf(torch.tensor(new_weight_float)):
+                        print(f"❌ ERROR: Modified weight at {tensor_index} is invalid ({new_weight_float}). Skipping.")
                         return
-                else:
-                    print(f"❌ ERROR: Layer '{layer_name}._packed_params._packed_params' not found in state_dict!")
-                    return
 
-                # ✅ Store golden value before modification
-                if (layer_name, tensor_index) not in self.golden_values:
-                    self.golden_values[(layer_name, tensor_index)] = weight_tensor[tensor_index].clone()
+                    scale = state_dict[f"{layer_name}.scale"]
+                    zero_point = state_dict[f"{layer_name}.zero_point"].item()
+                    quantized_weight = torch.quantize_per_tensor(
+                        torch.tensor(new_weight_float, dtype=torch.float32), scale, zero_point, torch.qint8
+                    )
+                    weight_tensor[tensor_index] = quantized_weight.dequantize()
 
-                print(f"✅ Accessing weight tensor at {tensor_index}: {weight_tensor[tensor_index].item()}")
+                    for name, module in self.network.named_modules():
+                        if isinstance(module, torch.ao.nn.quantized.Linear):
+                            module._packed_params._packed_params = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
 
-                # Convert weight to integer format for bit manipulation
-                weight_float = weight_tensor[tensor_index].item()
-                weight_bytes = struct.pack('f', weight_float)
-                weight_int = int.from_bytes(weight_bytes, byteorder='little')
+                    self.network.load_state_dict(state_dict)
 
-                print(f"Bit {bit} before modification: {bin(weight_int)}")
-
-                if mode == "flip":
-                    weight_int ^= (1 << bit)
-                elif mode == "stuck":
-                    if stuck_value == 1:
-                        weight_int |= (1 << bit)
-                    else:
-                        weight_int &= ~(1 << bit)
-
-                print(f"Bit {bit} after modification: {bin(weight_int)}")
-
-                # Convert modified bits back to float
-                new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
-                new_weight_float = struct.unpack('f', new_weight_bytes)[0]
-
-                # **Check for invalid values before assignment**
-                if torch.isnan(torch.tensor(new_weight_float)) or torch.isinf(torch.tensor(new_weight_float)):
-                    print(f"❌ ERROR: Modified weight at {tensor_index} resulted in an invalid value ({new_weight_float}). Skipping.")
-                    return
-
-                # **Re-quantize before re-assigning**
-                scale = state_dict[f"{layer_name}.scale"]
-                zero_point = state_dict[f"{layer_name}.zero_point"].item()
-
-                quantized_weight = torch.quantize_per_tensor(torch.tensor(new_weight_float, dtype=torch.float32), scale, zero_point, torch.qint8)
-                weight_tensor[tensor_index] = quantized_weight.dequantize()
-
-                # ✅ REPACK AFTER MODIFYING WEIGHTS (Fix)
-                for name, module in self.network.named_modules():
-                    if isinstance(module, torch.ao.nn.quantized.Linear):
-                        packed_weight = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
-                        module._packed_params._packed_params = packed_weight  # Correct assignment
-
-                self.network.load_state_dict(state_dict)
-
-                print(f"✅ Modified weight at {tensor_index}: {weight_tensor[tensor_index].item()}")
-
-        except IndexError:
-            print(f"❌ ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}._packed_params._packed_params'.")
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
-
-
+            print(f"❌ Unexpected error in _modify_bit: {e}")
 
     def restore_golden(self):
         if not self.golden_values:
-            print('❌ CRITICAL ERROR: No golden values stored, skipping restore.')
+            if not self.has_restored:  # Only log the error once
+                print("❌ CRITICAL ERROR: No golden values stored, skipping restore.")
+                self.has_restored = True  # Prevent repeated logging
             return
 
         state_dict = self.network.state_dict()
+        total_restored = 0
 
-        for (layer_name, tensor_index), golden_value in self.golden_values.items():
+        print(f"🔄 Attempting to restore {len(self.golden_values)} golden values...")
+
+        for (layer_name, tensor_index), golden_value in list(self.golden_values.items()):
             if f"{layer_name}._packed_params._packed_params" in state_dict:
                 packed_params = state_dict[f"{layer_name}._packed_params._packed_params"]
                 weight_tensor = packed_params[0].dequantize()
             elif f"{layer_name}.weight" in state_dict:
                 weight_tensor = state_dict[f"{layer_name}.weight"]
             else:
-                print(f"❌ ERROR: Layer '{layer_name}' not found in the network.")
+                print(f"❌ ERROR: Layer '{layer_name}' not found in state_dict.")
                 continue
 
-            if any(index >= dim for index, dim in zip(tensor_index, weight_tensor.shape)):
-                print(f"❌ ERROR: Tensor index {tensor_index} is out of range for layer '{layer_name}'.")
-                continue
-
-            # ✅ Restore the golden value and RE-QUANTIZE it
             scale = state_dict[f"{layer_name}.scale"]
             zero_point = state_dict[f"{layer_name}.zero_point"].item()
 
             quantized_weight = torch.quantize_per_tensor(golden_value.clone(), scale, zero_point, torch.qint8)
             weight_tensor[tensor_index] = quantized_weight.dequantize()
+            total_restored += 1
 
         # ✅ REPACK THE QUANTIZED WEIGHTS BEFORE LOADING THEM
         for name, module in self.network.named_modules():
             if isinstance(module, torch.ao.nn.quantized.Linear):
-                packed_weight = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
-                module._packed_params._packed_params = packed_weight  # Correct assignment
+                module._packed_params._packed_params = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
 
         self.network.load_state_dict(state_dict)
-        print(f"✅ Successfully restored golden values and repacked weights.")
+        print(f"✅ Successfully restored {total_restored} golden values.")
 
-        self.golden_values.clear()
+        # ✅ Clear only if restoration happened
+        if total_restored > 0:
+            self.golden_values.clear()
+            self.has_restored = False  # Reset flag after successful restore
+        else:
+            print("⚠️ WARNING: Some golden values may not have been restored correctly.")
+
 

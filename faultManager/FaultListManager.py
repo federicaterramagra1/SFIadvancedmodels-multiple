@@ -65,8 +65,9 @@ class FLManager:
 
         # Group the faults into batches for multiple fault injections
         grouped_fault_list = [
-            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT]
+            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT]  # Group faults into batches
             for i in range(0, len(fault_list), SETTINGS.NUM_FAULTS_TO_INJECT)
         ]
 
         return grouped_fault_list
+
