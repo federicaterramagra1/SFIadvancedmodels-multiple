@@ -59,6 +59,7 @@ class WeightFaultInjector:
                             else:
                                 weight_int &= ~(1 << bit)  # Set the bit to 0
 
+
                     # Convert modified bits back to float
                     new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
                     new_weight_float = struct.unpack('f', new_weight_bytes)[0]
