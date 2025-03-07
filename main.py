@@ -13,6 +13,9 @@ def print_layer_dimensions(network):
         if 'weight' in name:
             print(f"Layer {name} weight shape: {param.shape}")
 
+import torch
+torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if on x86 CPU
+
 def main():
     torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if you're on an x86 CPU
 
