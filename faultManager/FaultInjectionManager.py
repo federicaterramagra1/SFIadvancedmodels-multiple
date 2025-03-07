@@ -25,6 +25,7 @@ def ensure_directory_exists(directory):
         print(f"Creating missing directory: {directory}")
         os.makedirs(directory)
 
+
 class FaultInjectionManager:
     def __init__(self,
                  network: torch.nn.Module,
