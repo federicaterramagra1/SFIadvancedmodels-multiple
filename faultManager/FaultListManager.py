@@ -10,6 +10,16 @@ from faultManager.WeightFault import WeightFault
 from faultManager.NeuronFault import NeuronFault
 from faultManager.modules.InjectableOutputModule import injectable_output_module_class
 import torch
+import os
+import csv
+import numpy as np
+from tqdm import tqdm
+from ast import literal_eval as make_tuple
+from typing import Type, List
+from torch.nn import Module
+import SETTINGS
+from faultManager.WeightFault import WeightFault
+import torch
 
 class FLManager:
     def __init__(self, network: Module, network_name: str, device: torch.device, module_class: Type[Module] = None):
@@ -40,7 +50,7 @@ class FLManager:
 
     def get_weight_fault_list(self) -> List[List[WeightFault]]:
         """
-        Get the fault list for the weights, ensuring valid indices.
+        Get the fault list for the weights, ensuring valid indices and bit positions.
         """
         fault_list = []
         try:
@@ -51,13 +61,12 @@ class FLManager:
                     WeightFault(
                         injection=int(fault[0]),
                         layer_name=fault[1],
-                        tensor_index=make_tuple(fault[2]),
-                        # Creating a list of bits based on the fault list column (split by commas)
-                        bits=list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]  # Slice based on NUM_FAULTS_TO_INJECT
+                        tensor_index=make_tuple(fault[2]),  # Make sure this index matches your weights' shape
+                        # Handle multiple bits for each fault. If NUM_FAULTS_TO_INJECT is 2, inject 2 bits per weight
+                        bits = list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]  # Take exactly NUM_FAULTS_TO_INJECT bits
                     )
                     for fault in fault_list
                 ]
-
             print(f'Loaded {len(fault_list)} faults from the fault list')
 
         except FileNotFoundError:
@@ -71,3 +80,4 @@ class FLManager:
         ]
 
         return grouped_fault_list
+

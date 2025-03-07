@@ -574,36 +574,50 @@ def load_from_dict(network, device, path, function=None):
     print('state_dict loaded into network')
     
     
+import os
+import numpy as np
+
 def ensure_directory_exists(directory):
-    """Check if the directory exists and create it if not."""
+    """
+    Ensure that the directory exists. If not, create it.
+    """
     if not os.path.exists(directory):
         print(f"Creating missing directory: {directory}")
         os.makedirs(directory)
 
 def ensure_file_exists(file_path, default_data=None):
-    """Check if the file exists and create it with default_data if not."""
+    """
+    Check if the file exists and create it with default_data if not.
+    """
     if not os.path.exists(file_path):
         print(f"Creating missing file: {file_path}")
+        # If you need to create a numpy file, for example:
         if default_data is not None:
-            np.save(file_path, default_data)  # Save numpy array with default_data
+            np.save(file_path, default_data)  # You can replace this with your own logic to save initial data
         else:
-            # If no default data, create an empty file
+            # Create an empty file (if needed)
             open(file_path, 'w').close()
 
 def count_batch(folder, path):
     try:
-        # Ensure the file exists and isn't empty
-        if os.path.exists(path) and os.path.getsize(path) > 0:
-            loaded_file = np.load(path)
-            n_outputs = loaded_file.shape[2]
-            n_faults = loaded_file.shape[0]
-            return len(os.listdir(folder)), n_outputs, n_faults
-        else:
-            print(f"Warning: {path} is empty or doesn't exist. Skipping.")
-            return 0, 0, 0  # Skip if file is empty or doesn't exist
+        files = os.listdir(folder)
+        files = [f for f in files if os.path.isfile(os.path.join(folder, f))]
+        loaded_file = np.load(path, allow_pickle=True)  # Aggiungi allow_pickle=True
+        
+        if loaded_file.size == 0:
+            print(f"Warning: {path} is empty. Skipping.")
+            return 0, 0, 0  # Skip if empty
+
+        n_outputs = loaded_file.shape[2]
+        n_faults = loaded_file.shape[0]
+        return len(files), n_outputs, n_faults
+    except EOFError:
+        print(f"Error: No data left in file {path}. Skipping.")
+        return 0, 0, 0
     except Exception as e:
-        print(f"Error while reading {path}: {e}")
-        return 0, 0, 0  # Skip on error
+        print(f"Unexpected error with file {path}: {e}")
+        return 0, 0, 0
+
 
 def output_definition(test_loader, batch_size):
     

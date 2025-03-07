@@ -13,15 +13,26 @@ from torch.utils.data import DataLoader
 from faultManager.WeightFaultInjector import WeightFaultInjector
 from typing import List, Union
 import torch
+import os
+import numpy as np
+import torch
+
+def ensure_directory_exists(directory):
+    """
+    Ensure that the directory exists. If not, create it.
+    """
+    if not os.path.exists(directory):
+        print(f"Creating missing directory: {directory}")
+        os.makedirs(directory)
 
 class FaultInjectionManager:
     def __init__(self,
-                 network: Module,
+                 network: torch.nn.Module,
                  network_name: str,
                  device: torch.device,
-                 loader: DataLoader,
+                 loader: torch.utils.data.DataLoader,
                  clean_output: torch.Tensor,
-                 injectable_modules: List[Union[Module, List[Module]]] = None,
+                 injectable_modules: List[Union[torch.nn.Module, List[torch.nn.Module]]] = None,
                  num_faults_to_inject: int = 2):
         self.network = network
         self.network_name = network_name
@@ -30,7 +41,7 @@ class FaultInjectionManager:
         self.clean_output = clean_output
         self.faulty_output = list()
         self.num_faults_to_inject = num_faults_to_inject
-        print(f"Injecting {self.num_faults_to_inject} faults per batch")  
+        print(f"Injecting {self.num_faults_to_inject} faults per batch")
 
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
         self.__faulty_output_folder = SETTINGS.FAULTY_OUTPUT_FOLDER
@@ -96,7 +107,6 @@ class FaultInjectionManager:
         elapsed = math.ceil(time.time() - start_time)
         return str(timedelta(seconds=elapsed)), total_iterations
 
-
     def __inject_fault_on_weight(self, faults, fault_mode='stuck-at'):
         # Flatten the list of faults before passing it to inject_faults()
         flattened_faults = [fault for batch in faults for fault in batch] if isinstance(faults[0], list) else faults
@@ -122,6 +132,9 @@ class FaultInjectionManager:
         return faulty_prediction_scores, faulty_prediction_indices, different_predictions
     
     def save_faulty_outputs(self, faulty_tensor_data, batch_id):
-        output_file_path = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/batch_{batch_id}.npy"
+        batch_folder = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/batch_{batch_id}"
+        ensure_directory_exists(batch_folder)  # Ensure the directory exists
+
+        output_file_path = f"{batch_folder}/batch_{batch_id}.npy"
         print(f"Saving faulty output to {output_file_path}")
         np.save(output_file_path, faulty_tensor_data)
