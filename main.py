@@ -5,8 +5,11 @@ import SETTINGS
 from faultManager.FaultListManager import FLManager
 from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
-from utils import get_network, get_device, get_loader, get_fault_list, clean_inference, output_definition, fault_list_gen, csv_summary
-
+from utils import (
+    get_network, get_device, get_loader, get_fault_list, 
+    clean_inference, output_definition, fault_list_gen, 
+    csv_summary, num_experiments_needed, select_random_faults
+)
 # Function to print layer weight dimensions for validation
 def print_layer_dimensions(network):
     for name, param in network.named_parameters():

@@ -56,12 +56,16 @@ class FaultInjectionManager:
                                       fault_list: list,
                                       first_batch_only: bool = False,
                                       force_n: int = None,
-                                      save_output: bool = False):
+                                      save_output: bool = True):
 
-        self.skipped_inferences = 0
-        self.total_inferences = 0
+       
+        if fault_model == 'stuck-at_params':
+            internal_fault_mode = 'stuck-at'
+        elif fault_model == 'bit-flip':
+            internal_fault_mode = 'bit-flip'  # Deve essere bit-flip qui!
+        else:
+            raise ValueError(f'Invalid fault model {fault_model}')
 
-        internal_fault_mode = 'stuck-at' if fault_model == 'stuck-at_params' else 'flip'
 
         with torch.no_grad():
             for batch_id, batch in enumerate(self.loader):
@@ -70,23 +74,24 @@ class FaultInjectionManager:
 
                 faulty_outputs_batch = []
 
-                pbar = tqdm(range(0, len(fault_list), self.num_faults_to_inject), colour='green', desc=f'FI on batch {batch_id}')
+                pbar = tqdm(range(0, len(fault_list), self.num_faults_to_inject), 
+                            colour='green', desc=f'FI on batch {batch_id}')
+
                 for i in pbar:
                     batch_faults = fault_list[i:i + self.num_faults_to_inject]
                     self.__inject_fault_on_weight(batch_faults, fault_mode=internal_fault_mode)
 
                     faulty_scores, faulty_indices, _ = self.__run_inference_on_batch(batch_id=batch_id, data=data)
-
-                    # Accumula output difettosi per ogni fault
                     faulty_outputs_batch.append(faulty_scores.cpu().numpy())
 
                     self.weight_fault_injector.restore_golden()
 
-                # Salva una volta alla fine di ogni batch
                 if save_output:
-                    faulty_outputs_batch = np.array(faulty_outputs_batch)  # (n_faults, batch_size, outputs)
+                    faulty_outputs_batch = np.array(faulty_outputs_batch) 
                     self.save_faulty_outputs(faulty_outputs_batch, batch_id)
 
+                if first_batch_only:
+                    break
 
     def __inject_fault_on_weight(self, faults, fault_mode='stuck-at'):
         # Flatten the list of faults before passing it to inject_faults()

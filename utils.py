@@ -868,95 +868,61 @@ import csv
 import os
 import SETTINGS
 
+import itertools
+import csv
+import os
 def fault_list_gen():
-    random_seed = SETTINGS.SEED
-    random.seed(random_seed)
+    random.seed(SETTINGS.SEED)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    network = get_network(network_name=SETTINGS.NETWORK_NAME, device=device, dataset_name=SETTINGS.DATASET_NAME)
+    network = get_network(network_name=SETTINGS.NETWORK_NAME, 
+                          device=device, 
+                          dataset_name=SETTINGS.DATASET_NAME)
     network.to(device)
 
-    # Check if the model is quantized correctly
-    is_quantized = any(isinstance(m, torch.quantization.QuantWrapper) for m in network.modules()) or any(hasattr(m, 'qconfig') for m in network.modules())
-    bit_width = 8 if is_quantized else 32
+    bit_width = 8  # 8-bit quantization
+    faults_list = []
 
-    # Print model parameters for debugging
-    print("Model parameters before creating fault list:")
-    for name, param in network.named_parameters():
-        print(f"{name}: {param.shape}")
+    layer_params_list = [
+        (name.replace('.weight', ''), param.shape) 
+        for name, param in network.named_parameters() if 'weight' in name
+    ]
 
-    layer_params_list = [(name, param.numel()) for name, param in network.named_parameters() if len(param.size()) >= 2]
-    layer_dimensions_list = [(name, np.array(param.size())) for name, param in network.named_parameters() if len(param.size()) >= 2]
+    injection_counter = 0
 
-    total_params = sum(param.numel() for _, param in network.named_parameters() if len(param.size()) >= 2)
-    print(f"Total parameters: {total_params}")
-
-    total_bits = total_params * bit_width
-    print(f"Total bits in the model: {total_bits}")
-
-    p = SETTINGS.probability
-    e = SETTINGS.error_margin
-    t = SETTINGS.confidence_constant
-    N = total_bits * 2
-
-    faults_to_inject = round(N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p))))
-    print(f"Faults to inject: {faults_to_inject}")
-
-    faults_to_inject_list = [(layer_name, round((params * bit_width * faults_to_inject) / total_bits)) for layer_name, params in layer_params_list]
+    for layer_name, param_shape in layer_params_list:
+        for tensor_index in itertools.product(*(range(s) for s in param_shape)):
+            bit_combinations = itertools.combinations(range(bit_width), SETTINGS.NUM_FAULTS_TO_INJECT)
+            for bits in bit_combinations:
+                faults_list.append([
+                    injection_counter,
+                    layer_name,
+                    tensor_index,
+                    ','.join(map(str, bits))
+                ])
+                injection_counter += 1
 
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
     csv_filename = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
     header = ['Injection', 'Layer', 'TensorIndex', 'Bit']
-    counter = 0
-
     with open(csv_filename, 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(header)
+        csv_writer.writerows(faults_list)
 
-        used_indices = set()
-        row_number = 0
-        max_attempts = 1000
+    print(f"Fault list completa generata: {len(faults_list)} fault totali.")
 
-        for injection_number, (layer_name, total_params) in enumerate(layer_params_list):
-            layer_dimensions = next(dimensions for name, dimensions in layer_dimensions_list if name == layer_name)
-            for _ in range(faults_to_inject_list[injection_number][1]):
-                attempts = 0
-                while attempts < max_attempts:
-                    if len(layer_dimensions) == 4:
-                        height_index = random.randint(0, layer_dimensions[0] - 1)
-                        width_index = random.randint(0, layer_dimensions[1] - 1)
-                        depth_index = random.randint(0, layer_dimensions[2] - 1)
-                        channel_index = random.randint(0, layer_dimensions[3] - 1)
-                        tensor_index = f'({height_index}, {width_index}, {depth_index}, {channel_index})'
-                    elif len(layer_dimensions) == 3:
-                        height_index = random.randint(0, layer_dimensions[0] - 1)
-                        width_index = random.randint(0, layer_dimensions[1] - 1)
-                        depth_index = random.randint(0, layer_dimensions[2] - 1)
-                        tensor_index = f'({height_index}, {width_index}, {depth_index})'
-                    elif len(layer_dimensions) == 2:
-                        height_index = random.randint(0, layer_dimensions[0] - 1)
-                        width_index = random.randint(0, layer_dimensions[1] - 1)
-                        tensor_index = f'({height_index}, {width_index})'
+def num_experiments_needed(p_estimate=0.5):
+    e = SETTINGS.error_margin
+    t = SETTINGS.confidence_constant
+    n_exp = int((t ** 2 * p_estimate * (1 - p_estimate)) / (e ** 2))
+    print(f"Numero minimo di esperimenti necessari: {n_exp}")
+    return n_exp
 
-                    bit_flips = random.sample(range(bit_width), SETTINGS.NUM_FAULTS_TO_INJECT)
-                    layer_name_no_weight = layer_name.replace('.weight', '')
-                    index_key = (layer_name_no_weight, tensor_index, tuple(bit_flips))  # Store as tuple of bits
-                    if index_key not in used_indices:
-                        break
-                    else:
-                        attempts += 1
-                        counter += 1
+import pandas as pd
 
-                if attempts == max_attempts:
-                    print(f"Could not find a unique combination for {layer_name}. Increase max_attempts if needed.")
-                    break
-
-                used_indices.add(index_key)
-                csv_writer.writerow([row_number, layer_name_no_weight, tensor_index, ','.join(map(str, bit_flips))])  # Write list of bits
-                row_number += 1
-
-    print(f"Number of attempted indices: {counter}")
-    print(f"Number of duplicate indices: {row_number - len(used_indices)}")
-    print(f"Number of unique indices: {len(used_indices)}")
-    print(f"CSV file '{csv_filename}' has been created successfully.")
+def select_random_faults(fault_list_path, num_faults_needed):
+    fault_df = pd.read_csv(fault_list_path)
+    sampled_faults = fault_df.sample(n=num_faults_needed, random_state=SETTINGS.SEED)
+    sampled_faults.to_csv(fault_list_path.replace('.csv', '_sampled.csv'), index=False)
+    print(f"Fault casualmente selezionati salvati in {fault_list_path.replace('.csv', '_sampled.csv')}")

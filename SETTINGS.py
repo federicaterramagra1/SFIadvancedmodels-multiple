@@ -26,7 +26,7 @@ DATASET_NAME = 'BreastCancer'
 NETWORK_NAME = 'SimpleMLP'
 
 # Fault injection settings
-NUM_FAULTS_TO_INJECT = 2  # Number of faults to inject simultaneously
+NUM_FAULTS_TO_INJECT = 4  # Number of faults to inject simultaneously
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = False
@@ -76,7 +76,7 @@ NO_LOG_RESULTS = False
 BATCH_SIZE = 64
 
 # fault model to use (check the top of the file for the available models)
-FAULT_MODEL = 'stuck-at_params'
+FAULT_MODEL = 'bit-flip'
 
 # dataset to use (check the top of the file for the available datasets)
 DATASET = DATASET_NAME

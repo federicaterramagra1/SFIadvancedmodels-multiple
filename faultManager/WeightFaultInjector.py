@@ -44,53 +44,44 @@ class WeightFaultInjector:
         try:
             with torch.no_grad():
                 state_dict = self.network.state_dict()
-                if f"{layer_name}._packed_params._packed_params" in state_dict:
-                    packed_params = state_dict[f"{layer_name}._packed_params._packed_params"]
-                    weight_tensor = packed_params[0].dequantize()
+                weight_tensor = state_dict[f"{layer_name}._packed_params._packed_params"][0].dequantize()
 
-                    if (layer_name, tensor_index) not in self.golden_values:
-                        print(f" Storing golden value for {layer_name} at {tensor_index}")
-                        self.golden_values[(layer_name, tensor_index)] = weight_tensor[tensor_index].clone()
+                weight_float = weight_tensor[tensor_index].item()
+                weight_bytes = struct.pack('f', weight_float)
+                weight_int = int.from_bytes(weight_bytes, byteorder='little')
 
-                    weight_float = weight_tensor[tensor_index].item()
-                    weight_bytes = struct.pack('f', weight_float)
-                    weight_int = int.from_bytes(weight_bytes, byteorder='little')
+                # Modifica bit multipli chiaramente:
+                for bit in bits:
+                    if mode == "flip":
+                        weight_int ^= (1 << bit)  # Flip del bit
+                    elif mode == "stuck":
+                        if stuck_value == 1:
+                            weight_int |= (1 << bit)  # set a 1
+                        else:
+                            weight_int &= ~(1 << bit)  # set a 0
 
-                    # Modify multiple bits
-                    for bit in bits:
-                        if mode == "flip":
-                            weight_int ^= (1 << bit)  # Flip the bit
-                        elif mode == "stuck":
-                            if stuck_value == 1:
-                                weight_int |= (1 << bit)  # Set the bit to 1
-                            else:
-                                weight_int &= ~(1 << bit)  # Set the bit to 0
+                new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
+                new_weight_float = struct.unpack('f', new_weight_bytes)[0]
 
+                scale = state_dict[f"{layer_name}.scale"]
+                zero_point = state_dict[f"{layer_name}.zero_point"].item()
+                quantized_weight = torch.quantize_per_tensor(
+                    torch.tensor(new_weight_float, dtype=torch.float32), scale, zero_point, torch.qint8
+                )
 
-                    # Convert modified bits back to float
-                    new_weight_bytes = weight_int.to_bytes(4, byteorder='little')
-                    new_weight_float = struct.unpack('f', new_weight_bytes)[0]
+                # Applica chiaramente il peso modificato:
+                weight_tensor[tensor_index] = quantized_weight.dequantize()
 
-                    # **Check for invalid values before assignment**
-                    if torch.isnan(torch.tensor(new_weight_float)) or torch.isinf(torch.tensor(new_weight_float)):
-                        print(f" ERROR: Modified weight at {tensor_index} is invalid ({new_weight_float}). Skipping.")
-                        return
+                # Ricompatta i parametri quantizzati chiaramente:
+                for name, module in self.network.named_modules():
+                    if isinstance(module, torch.ao.nn.quantized.Linear):
+                        module._packed_params._packed_params = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
 
-                    scale = state_dict[f"{layer_name}.scale"]
-                    zero_point = state_dict[f"{layer_name}.zero_point"].item()
-                    quantized_weight = torch.quantize_per_tensor(
-                        torch.tensor(new_weight_float, dtype=torch.float32), scale, zero_point, torch.qint8
-                    )
-                    weight_tensor[tensor_index] = quantized_weight.dequantize()
-
-                    for name, module in self.network.named_modules():
-                        if isinstance(module, torch.ao.nn.quantized.Linear):
-                            module._packed_params._packed_params = torch.ops.quantized.linear_prepack(module.weight(), module.bias())
-
-                    self.network.load_state_dict(state_dict)
+                self.network.load_state_dict(state_dict)
 
         except Exception as e:
-            print(f" Unexpected error in _modify_bit: {e}")
+            print(f"Errore inatteso in _modify_bit: {e}")
+
 
 
     def restore_golden(self):
