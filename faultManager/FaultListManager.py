@@ -49,34 +49,43 @@ class FLManager:
             self.injectable_output_modules_list.append(layer_module)
 
     def get_weight_fault_list(self) -> List[List[WeightFault]]:
-        """
-        Get the fault list for the weights, ensuring valid indices and bit positions.
-        """
-        fault_list = []
-        try:
-            with open(f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}', newline='') as f_list:
-                reader = csv.reader(f_list)
-                fault_list = list(reader)[1:]  # Skip header
-                fault_list = [
-                    WeightFault(
-                        injection=int(fault[0]),
-                        layer_name=fault[1],
-                        tensor_index=make_tuple(fault[2]),  
-                        bits=list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]  
-                    )
-                    for fault in fault_list
-                ]
-            print(f'Loaded {len(fault_list)} faults from the fault list')
+            """
+            Get the fault list for the weights, ensuring exactly NUM_FAULTS_TO_INJECT per weight.
+            """
+            fault_list = []
+            try:
+                with open(f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}', newline='') as f_list:
+                    reader = csv.reader(f_list)
+                    fault_list = list(reader)[1:]  # Skip header
 
-        except FileNotFoundError:
-            print(f'Fault list file not found: {SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}')
-            exit(-1)
+                    # Group faults by weight
+                    grouped_faults = {}
+                    for fault in fault_list:
+                        tensor_index = make_tuple(fault[2])
+                        layer_name = fault[1]
+                        bits = list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]
 
-        grouped_fault_list = [
-            fault_list[i:i + SETTINGS.NUM_FAULTS_TO_INJECT] 
-            for i in range(0, len(fault_list), SETTINGS.NUM_FAULTS_TO_INJECT)
-        ]
+                        key = (layer_name, tensor_index)
+                        if key not in grouped_faults:
+                            grouped_faults[key] = []
 
-        return grouped_fault_list
+                        if len(grouped_faults[key]) < SETTINGS.NUM_FAULTS_TO_INJECT:
+                            grouped_faults[key].append(WeightFault(
+                                injection=int(fault[0]),
+                                layer_name=layer_name,
+                                tensor_index=tensor_index,
+                                bits=bits
+                            ))
+
+                    grouped_fault_list = list(grouped_faults.values())
+
+                print(f'✅ Loaded {len(grouped_fault_list)} unique fault groups from the fault list')
+
+            except FileNotFoundError:
+                print(f'❌ ERROR: Fault list file not found: {SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}')
+                exit(-1)
+
+            return grouped_fault_list
+
 
 

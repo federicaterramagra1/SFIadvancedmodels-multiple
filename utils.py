@@ -632,6 +632,19 @@ def count_batch(folder, path):
         return 0, 0, 0
 
 
+import os
+import numpy as np
+import pandas as pd
+import shutil
+import SETTINGS
+from tqdm import tqdm
+
+import os
+import numpy as np
+import pandas as pd
+import shutil
+import SETTINGS
+from tqdm import tqdm
 
 def output_definition(test_loader, batch_size):
     masked = 0
@@ -645,88 +658,83 @@ def output_definition(test_loader, batch_size):
     
     for batch_id, batch in enumerate(pbar):
         _, label = batch
-        
-        # Assuming label is a tensor, convert it to a numpy array
         label_np = label.numpy()
-
-        # Initialize an empty list to store information for each image in the batch
-        batch_info = []
-
-        for j in range(len(label_np)):
-            image_info = [batch_id, j, label_np[j].item()]
-            batch_info.append(image_info)
-
-        # Append batch_info to the batch_info_list
+        batch_info = [[batch_id, j, label_np[j].item()] for j in range(len(label_np))]
         batch_info_list.extend(batch_info)
-
         dataset_size += len(label_np)
 
     batch_info_array = np.array(batch_info_list) 
-    
+
     del test_loader
     del batch_info_list
 
     # Load clean tensor
-    clean_output_path = SETTINGS.CLEAN_OUTPUT_FOLDER + '/clean_output.npy'
-
-    print('loading clean outputs...')
+    clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
+    print('Loading clean outputs...')
+    if not os.path.exists(clean_output_path):
+        print(f"❌ ERROR: Clean output file {clean_output_path} is missing!")
+        return
+    
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
 
-    # To define these paths check FaultInjectionManager.py to see the faulty output folder path
-    batch_folder = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}'
-    batch_path = f'{batch_folder}' + '/batch_0.npy'
-    number_of_batch, n_outputs, n_faults = count_batch(batch_folder,  batch_path)
+    # Define faulty output paths
+    batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
+    batch_path = os.path.join(batch_folder, 'batch_0.npy')
+    number_of_batch, n_outputs, n_faults = count_batch(batch_folder, batch_path)
 
-    print(f'number of batch: {number_of_batch}')
-
-    # Define the shape of the tensor
-    dim1 = n_faults 
-    dim2 = number_of_batch 
-    start_batch = 0
-    if SETTINGS.RAM_LIMIT:
-        start_batch = SETTINGS.BATCH_START
-        dim2 = SETTINGS.BATCH_END
-    dim3 = int(batch_size) 
+    print(f'Number of batches: {number_of_batch}')
+    dim1, dim2 = n_faults, number_of_batch
+    start_batch = SETTINGS.BATCH_START if SETTINGS.RAM_LIMIT else 0
+    dim3 = int(batch_size)  
 
     faulty_tensor_data = np.zeros((n_faults, number_of_batch, dim3, n_outputs), dtype=np.float32)
-    
-    print('loading faulty outputs')
+
+    print('Loading faulty outputs...')
     for i in tqdm(range(start_batch, dim2)):
-        
-        file_name = SETTINGS.FAULTY_OUTPUT_FOLDER + f'/{SETTINGS.FAULT_MODEL}' + f'/batch_{i}.npy'
-        print(f'loading: batch_{i}.npy')
-        loaded_faulty_output = np.load(file_name)
+        file_name = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL, f'batch_{i}.npy')
+        print(f'Loading: {file_name}')
+
+        if not os.path.exists(file_name):
+            print(f"❌ ERROR: Faulty output file {file_name} is missing!")
+            continue
+
+        loaded_faulty_output = np.load(file_name, allow_pickle=True)
+
+        if loaded_faulty_output.shape != faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :].shape:
+            print(f"❌ ERROR: Shape mismatch in faulty output for batch {i}!")
+            print(f"Expected: {faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :].shape}, Got: {loaded_faulty_output.shape}")
+
         faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :] = loaded_faulty_output
-        del loaded_faulty_output
 
-    print('shape of faulty tensor:', faulty_tensor_data.shape)
-
+    print('Shape of faulty tensor:', faulty_tensor_data.shape)
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
-    
+
     clean_output_match_counter = 0
     faulty_output_match_counter = 0
 
-    # open the .csv
-    with open(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv', mode='a') as file_csv:
-
+    # Open CSV
+    output_csv_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
+    with open(output_csv_path, mode='a') as file_csv:
         csv_writer = csv.writer(file_csv)
-        if SETTINGS.BATCH_START == 0 or SETTINGS.RAM_LIMIT == False:
+        if SETTINGS.BATCH_START == 0 or not SETTINGS.RAM_LIMIT:
             csv_writer.writerow(['fault', 'batch', 'image', 'output'])
 
-        print(f'faults: {n_faults}, batches: {number_of_batch}')
+        print(f'Faults: {n_faults}, Batches: {number_of_batch}')
 
-        # inside faults
-        for z in tqdm(range(dim1), desc="output definition progress"):
-            # inside batches
+        # Iterate over faults
+        for z in tqdm(range(dim1), desc="Output definition progress"):
             for i in range(start_batch, dim2):
-                # inside images
                 for j in range(min(dim3, loaded_clean_output[i].shape[0])):
                     clean_output_argmax = np.argmax(loaded_clean_output[i][j, :])
-                    faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])    
+                    faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])
 
                     clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
                     faulty_output_match = (faulty_output_argmax == clean_output_label)
-                    
+
+                    # ✅ Print changes in prediction
+                    if not np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
+                        print(f"⚠️ Prediction Change Detected! Batch {i}, Image {j}: Clean={clean_output_argmax}, Faulty={faulty_output_argmax}")
+
                     if faulty_output_match:
                         faulty_output_match_counter += 1
 
@@ -748,57 +756,47 @@ def output_definition(test_loader, batch_size):
     del loaded_clean_output
     del faulty_tensor_data
 
+    # Reload CSV to confirm changes
     if SETTINGS.RAM_LIMIT:
-        print('loading csv file...')
-        df = pd.read_csv(f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv')
+        print('Loading CSV file...')
+        df = pd.read_csv(output_csv_path)
         output_count = df['output'].value_counts()
-        
-        masked = output_count[0]
-        not_critical = output_count[1]
-        critical = output_count[2]
- 
-    print(f'total outputs: {masked + not_critical + critical}')
-    print('masked:', masked)
-    print(f'% masked faults: {100*masked/(masked + not_critical + critical)} %')
-    print('not critical faults:', not_critical)
-    print(f'% not critical: {100*not_critical/(masked + not_critical + critical)} %')
-    print('SDC-1:', critical)   
-    print(f'% critical: {100*critical/(masked + not_critical + critical)} %')
-    print(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %')
-    
+
+        masked = output_count.get(0, 0)
+        not_critical = output_count.get(1, 0)
+        critical = output_count.get(2, 0)
+
+    print(f'Total outputs: {masked + not_critical + critical}')
+    print('Masked:', masked)
+    print(f'% Masked Faults: {100 * masked / (masked + not_critical + critical):.2f} %')
+    print('Not Critical Faults:', not_critical)
+    print(f'% Not Critical: {100 * not_critical / (masked + not_critical + critical):.2f} %')
+    print('SDC-1:', critical)
+    print(f'% Critical: {100 * critical / (masked + not_critical + critical):.2f} %')
+    print(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %')
+
     if masked + not_critical + critical == 0:
-        print("Warning: No faults were recorded, skipping percentage calculations.")
+        print("⚠️ Warning: No faults were recorded, skipping percentage calculations.")
         percent_masked = percent_not_critical = percent_critical = 0
     else:
         percent_masked = 100 * masked / (masked + not_critical + critical)
         percent_not_critical = 100 * not_critical / (masked + not_critical + critical)
         percent_critical = 100 * critical / (masked + not_critical + critical)
 
-    print(f'% masked faults: {percent_masked} %')
-    print(f'% not critical faults: {percent_not_critical} %')
-    print(f'% critical faults: {percent_critical} %')
-
-
-    total_outputs = masked + not_critical + critical
-    percent_masked = 100 * masked / total_outputs
-    percent_not_critical = 100 * not_critical / total_outputs
-    percent_critical = 100 * critical / total_outputs
-    
-    with open(f'{SETTINGS.FI_ANALYSIS_PATH}/fault_statistics.txt', 'w') as file:
-        file.write(f'total outputs: {total_outputs}\n')
-        file.write(f'masked: {masked}\n')
-        file.write(f'% masked faults: {percent_masked} %\n')
-        file.write(f'not critical faults: {not_critical}\n')
-        file.write(f'% not critical: {percent_not_critical} %\n')
+    # Save final statistics
+    fault_statistics_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "fault_statistics.txt")
+    with open(fault_statistics_path, 'w') as file:
+        file.write(f'Total outputs: {masked + not_critical + critical}\n')
+        file.write(f'Masked: {masked}\n')
+        file.write(f'% Masked Faults: {percent_masked:.2f} %\n')
+        file.write(f'Not Critical Faults: {not_critical}\n')
+        file.write(f'% Not Critical: {percent_not_critical:.2f} %\n')
         file.write(f'SDC-1: {critical}\n')
-        file.write(f'% critical: {percent_critical} %\n')
-        file.write(f'TOP-1 faulty accuracy: {100*faulty_output_match_counter/(dataset_size*(n_faults))} %\n')
-
-    if SETTINGS.RAM_LIMIT:
-        del df
-        del output_count
+        file.write(f'% Critical: {percent_critical:.2f} %\n')
+        file.write(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %\n')
 
     return output_results_list
+
 
 
 def csv_summary():
