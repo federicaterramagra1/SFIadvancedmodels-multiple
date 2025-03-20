@@ -17,10 +17,9 @@ def print_layer_dimensions(network):
             print(f"Layer {name} weight shape: {param.shape}")
 
 import torch
-torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if on x86 CPU
+torch.backends.quantized.engine = 'fbgemm'  # Use 'fbgemm' if on x86 CPU
 
 def main():
-    torch.backends.quantized.engine = 'qnnpack'  # Use 'fbgemm' if you're on an x86 CPU
 
     if SETTINGS.FAULT_LIST_GENERATION:
         fault_list_gen()
@@ -28,7 +27,7 @@ def main():
         print('Fault list generation is disabled')
     
     if SETTINGS.FAULTS_INJECTION or SETTINGS.ONLY_CLEAN_INFERENCE:
-        torch.use_deterministic_algorithms(mode=True)
+        torch.use_deterministic_algorithms(True, warn_only=True)
 
         device = get_device(use_cuda0=SETTINGS.USE_CUDA_0, use_cuda1=SETTINGS.USE_CUDA_1)
         print(f'Using device {device}')
@@ -96,6 +95,9 @@ def main():
             fault_model=SETTINGS.FAULT_MODEL,
             fault_list_generator=fault_list_generator
         )
+
+        print(f"🔍 Fault list generata: {len(fault_list)} faults trovati.")
+
 
         # Retrieve injectable modules after initialization
         injectable_modules = fault_list_generator.injectable_output_modules_list

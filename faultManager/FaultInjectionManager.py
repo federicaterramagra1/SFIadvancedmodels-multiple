@@ -11,6 +11,7 @@ import math
 from datetime import timedelta
 from torch.utils.data import DataLoader
 from faultManager.WeightFaultInjector import WeightFaultInjector
+from faultManager.WeightFault import WeightFault 
 from typing import List, Union
 import torch
 import os
@@ -51,37 +52,30 @@ class FaultInjectionManager:
         self.weight_fault_injector = WeightFaultInjector(self.network)
         self.injectable_modules = injectable_modules
 
-    def run_faulty_campaign_on_weight(self,
-                                      fault_model: str,
-                                      fault_list: list,
-                                      first_batch_only: bool = False,
-                                      force_n: int = None,
-                                      save_output: bool = True):
-
-       
-        if fault_model == 'stuck-at_params':
-            internal_fault_mode = 'stuck-at'
-        elif fault_model == 'bit-flip':
-            internal_fault_mode = 'bit-flip'  # Deve essere bit-flip qui!
-        else:
-            raise ValueError(f'Invalid fault model {fault_model}')
-
-
+    def run_faulty_campaign_on_weight(self, fault_model: str, fault_list: list, first_batch_only: bool = False, save_output: bool = True):
+        """
+        Execute fault injection in batches.
+        """
+        print(f"DEBUG: Running fault injection campaign with {len(fault_list)} faults")
+        
         with torch.no_grad():
             for batch_id, batch in enumerate(self.loader):
-                data, target = batch
+                data, _ = batch
                 data = data.to(self.device)
 
                 faulty_outputs_batch = []
+                pbar = tqdm(fault_list, colour='green', desc=f'FI on batch {batch_id}')
 
-                pbar = tqdm(range(0, len(fault_list), self.num_faults_to_inject), 
-                            colour='green', desc=f'FI on batch {batch_id}')
+                for fault_group in pbar:
+                    print(f"DEBUG: Processing fault group {fault_group}")  # Debugging
+                    
+                    if not isinstance(fault_group, list):
+                        print(f"❌ ERROR: Expected a list, but got {type(fault_group)} - {fault_group}")
+                        continue  # Skip invalid entries
 
-                for i in pbar:
-                    batch_faults = fault_list[i:i + self.num_faults_to_inject]
-                    self.__inject_fault_on_weight(batch_faults, fault_mode=internal_fault_mode)
+                    self.__inject_fault_on_weight(fault_group, fault_mode=fault_model)
 
-                    faulty_scores, faulty_indices, _ = self.__run_inference_on_batch(batch_id=batch_id, data=data)
+                    faulty_scores, _, _ = self.__run_inference_on_batch(batch_id=batch_id, data=data)
                     faulty_outputs_batch.append(faulty_scores.cpu().numpy())
 
                     self.weight_fault_injector.restore_golden()
@@ -93,10 +87,29 @@ class FaultInjectionManager:
                 if first_batch_only:
                     break
 
+
+
+
     def __inject_fault_on_weight(self, faults, fault_mode='stuck-at'):
-        # Flatten the list of faults before passing it to inject_faults()
-        flattened_faults = [fault for batch in faults for fault in batch] if isinstance(faults[0], list) else faults
+        """
+        Inject a fault into the weights of the network.
+        """
+        print(f"DEBUG: Received faults - {faults}")  # Print for debugging
+
+        if not isinstance(faults, list):
+            print(f"❌ ERROR: Expected a list, but got {type(faults)} - {faults}")
+            return  # Avoid crashing the program
+
+        if all(isinstance(fault, WeightFault) for fault in faults):
+            flattened_faults = faults  # Already a correct list
+        else:
+            print(f"❌ ERROR: Found non-WeightFault elements in faults: {faults}")
+            return
+
+        print(f"DEBUG: Injecting faults: {[f.layer_name for f in flattened_faults]}")  # Print fault details
         self.weight_fault_injector.inject_faults(flattened_faults, fault_mode=fault_mode)
+
+
     
     def __run_inference_on_batch(self, batch_id: int, data: torch.Tensor):
         try:
