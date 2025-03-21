@@ -714,10 +714,12 @@ def output_definition(test_loader, batch_size):
 
     # Open CSV
     output_csv_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
-    with open(output_csv_path, mode='a') as file_csv:
+    mode = 'w' if SETTINGS.BATCH_START == 0 or not SETTINGS.RAM_LIMIT else 'a'
+    with open(output_csv_path, mode=mode) as file_csv:
         csv_writer = csv.writer(file_csv)
-        if SETTINGS.BATCH_START == 0 or not SETTINGS.RAM_LIMIT:
-            csv_writer.writerow(['fault', 'batch', 'image', 'output'])
+        if mode == 'w':
+            csv_writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
+
 
         print(f'Faults: {n_faults}, Batches: {number_of_batch}')
 
@@ -729,7 +731,8 @@ def output_definition(test_loader, batch_size):
                     faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])
 
                     clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
-                    faulty_output_match = (faulty_output_argmax == clean_output_label)
+                    clean_output_label_value = int(clean_output_label[0]) if clean_output_label.size > 0 else -1
+                    faulty_output_match = (faulty_output_argmax == clean_output_label_value)
 
                     if faulty_output_match:
                         faulty_output_match_counter += 1
@@ -809,22 +812,19 @@ def output_definition(test_loader, batch_size):
     return output_results_list
 
 
-
 def csv_summary():
     network_name = SETTINGS.NETWORK_NAME
 
     input_file_path1 = f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv'
     fault_list_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
     output_file_path = f'{SETTINGS.FI_SUM_ANALYSIS_PATH}'
+
     print(f"FI_ANALYSIS_PATH: {SETTINGS.FI_ANALYSIS_PATH}")
     print(f"Fault list path: {SETTINGS.FAULT_LIST_PATH}")
     print(f"Summary output path: {SETTINGS.FI_SUM_ANALYSIS_PATH}")
 
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
 
-    input_file_path2 = fault_list_path 
-
-    # Read data from the input CSV file into a DataFrame
     print(f'reading {network_name} input file 1 ...')
     try:
         df = pd.read_csv(input_file_path1)
@@ -835,40 +835,34 @@ def csv_summary():
 
     print(f'reading FL input file 2 ...')
     try:
-        df2 = pd.read_csv(input_file_path2)
+        df2 = pd.read_csv(fault_list_path)
         print('done')
     except FileNotFoundError:
-        print(f"File not found: {input_file_path2}")
+        print(f"File not found: {fault_list_path}")
         return
 
     masked_list = []
     non_critic_list = []
     critical_list = []
 
-    num_rows = df2.shape[0]
-    for i in tqdm(range(num_rows)):
-        masked = df[df['fault'] == i]['output'].eq(0).sum()
+    print('Calculating statistics per fault...')
+    for i in tqdm(range(len(df2))):
+        fault_outputs = df[df['Fault_ID'] == i]['output']
+
+        masked = (fault_outputs == 0).sum()
+        non_critic = (fault_outputs == 1).sum()
+        critical = fault_outputs.isin([2, 3, 4]).sum()
+
         masked_list.append(masked)
-        
-        non_critic = df[df['fault'] == i]['output'].eq(1).sum()
         non_critic_list.append(non_critic)
-        
-        critic = df[df['fault'] == i]['output'].eq(2).sum()
-        critical_list.append(critic)
-  
-    if SETTINGS.DATASET == 'CIFAR10':
-        df2['n_injections'] = 10000
-    elif SETTINGS.DATASET == 'GTSRB':
-        df2['n_injections'] = 12630
-    elif SETTINGS.DATASET == 'CIFAR100':
-        df2['n_injections'] = 10000
+        critical_list.append(critical)
+
     df2['masked'] = masked_list
     df2['non_critical'] = non_critic_list
     df2['critical'] = critical_list
 
     df2.to_csv(output_file_path, index=False)
-    print(f"Summary CSV saved to {output_file_path}")
-
+    print(f"✅ Summary CSV saved to {output_file_path}")
 
 import numpy as np
 import random

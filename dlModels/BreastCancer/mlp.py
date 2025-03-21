@@ -6,7 +6,7 @@ class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
         self.fc1 = nn.Linear(30, 4)
-        self.fc2 = nn.Linear(4, 1)
+        self.fc2 = nn.Linear(4, 2)  # Cambiato da 1 a 2 classi
         self.quant = quantization.QuantStub()
         self.dequant = quantization.DeQuantStub()
         self._initialize_weights()
@@ -21,7 +21,7 @@ class SimpleMLP(nn.Module):
     def forward(self, x):
         x = self.quant(x)
         x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
+        x = self.fc2(x)  # Rimosso ReLU qui per output logit a 2 classi
         x = self.dequant(x)
         return x
 
