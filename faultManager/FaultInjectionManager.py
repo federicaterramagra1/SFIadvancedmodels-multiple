@@ -54,36 +54,32 @@ class FaultInjectionManager:
 
     def run_faulty_campaign_on_weight(self, fault_model: str, fault_list: list, first_batch_only: bool = False, save_output: bool = True):
         """
-        Execute fault injection in batches.
+        Esegue la fault injection a batch, applicando per ogni gruppo le iniezioni in sequenza.
         """
-        print(f"DEBUG: Running fault injection campaign with {len(fault_list)} faults")
+        print(f"DEBUG: Running fault injection campaign with {len(fault_list)} fault groups")
         
         with torch.no_grad():
             for batch_id, batch in enumerate(self.loader):
                 data, _ = batch
                 data = data.to(self.device)
-
                 faulty_outputs_batch = []
                 pbar = tqdm(fault_list, colour='green', desc=f'FI on batch {batch_id}')
-
-                for fault_group in pbar:
-                    print(f"DEBUG: Processing fault group {fault_group}")  # Debugging
-                    
-                    if not isinstance(fault_group, list):
-                        print(f"❌ ERROR: Expected a list, but got {type(fault_group)} - {fault_group}")
-                        continue  # Skip invalid entries
-
-                    self.__inject_fault_on_weight(fault_group, fault_mode=fault_model)
-
-                    faulty_scores, _, _ = self.__run_inference_on_batch(batch_id=batch_id, data=data)
+                
+                for fault_group in tqdm(fault_list, desc=f'FI on batch {batch_id}'):
+                    print(f"DEBUG: Processing fault group for {fault_group[0].layer_name}, index {fault_group[0].tensor_index}")
+                    # applica tutte le iniezioni cumulative
+                    self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
+                    # inferenza UNA SOLA volta
+                    faulty_scores, _, _ = self.__run_inference_on_batch(batch_id, data)
                     faulty_outputs_batch.append(faulty_scores.cpu().numpy())
-
+                    # restore golden dopo il gruppo
                     self.weight_fault_injector.restore_golden()
 
+                
                 if save_output:
                     faulty_outputs_batch = np.array(faulty_outputs_batch) 
                     self.save_faulty_outputs(faulty_outputs_batch, batch_id)
-
+                
                 if first_batch_only:
                     break
 

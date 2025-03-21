@@ -731,27 +731,38 @@ def output_definition(test_loader, batch_size):
                     clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
                     faulty_output_match = (faulty_output_argmax == clean_output_label)
 
-                    # ✅ Print changes in prediction
-                    if not np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
-                        print(f"⚠️ Prediction Change Detected! Batch {i}, Image {j}: Clean={clean_output_argmax}, Faulty={faulty_output_argmax}")
-
                     if faulty_output_match:
                         faulty_output_match_counter += 1
 
+                    clean_confidence = loaded_clean_output[i][j, clean_output_argmax]
+                    faulty_confidence = faulty_tensor_data[z, i, j, clean_output_argmax]
+
                     if np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
                         masked += 1
-                        output_results_list.append('0')
+                        output_results_list.append('0')  # Masked
                         csv_writer.writerow([z, i, j, '0'])
 
                     elif clean_output_argmax == faulty_output_argmax:
-                        not_critical += 1
-                        output_results_list.append('1')
-                        csv_writer.writerow([z, i, j, '1'])
+                        delta = abs(faulty_confidence - clean_confidence) / max(1e-8, abs(clean_confidence))
+
+                        if delta >= 0.2:
+                            critical += 1
+                            output_results_list.append('3')  # SDC-20
+                            csv_writer.writerow([z, i, j, '3'])
+                        elif delta >= 0.1:
+                            critical += 1
+                            output_results_list.append('2')  # SDC-10
+                            csv_writer.writerow([z, i, j, '2'])
+                        else:
+                            not_critical += 1
+                            output_results_list.append('1')  # Not Critical
+                            csv_writer.writerow([z, i, j, '1'])
 
                     else:
                         critical += 1
-                        output_results_list.append('2')
-                        csv_writer.writerow([z, i, j, '2'])
+                        output_results_list.append('4')  # SDC-1 (Top-1 changed)
+                        csv_writer.writerow([z, i, j, '4'])
+
 
     del loaded_clean_output
     del faulty_tensor_data
@@ -880,35 +891,38 @@ def fault_list_gen():
 
     bit_width = 8  # 8-bit quantization
     faults_list = []
+    injection_counter = 0
 
+    # Trova tutti i tensori di pesi
     layer_params_list = [
-        (name.replace('.weight', ''), param.shape) 
+        (name.replace('.weight', ''), param.shape)
         for name, param in network.named_parameters() if 'weight' in name
     ]
 
-    injection_counter = 0
-
     for layer_name, param_shape in layer_params_list:
         for tensor_index in itertools.product(*(range(s) for s in param_shape)):
-            bit_combinations = itertools.combinations(range(bit_width), SETTINGS.NUM_FAULTS_TO_INJECT)
-            for bits in bit_combinations:
-                faults_list.append([
-                    injection_counter,
-                    layer_name,
-                    tensor_index,
-                    ','.join(map(str, bits))
-                ])
-                injection_counter += 1
+            all_combinations = list(itertools.combinations(range(bit_width), SETTINGS.NUM_FAULTS_TO_INJECT))
+            selected_bits = random.choice(all_combinations)  # Ne sceglie solo UNA
+
+            faults_list.append([
+                injection_counter,
+                layer_name,
+                tensor_index,
+                ','.join(map(str, selected_bits))
+            ])
+            injection_counter += 1
 
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
     csv_filename = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
     header = ['Injection', 'Layer', 'TensorIndex', 'Bit']
+
     with open(csv_filename, 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(header)
         csv_writer.writerows(faults_list)
 
-    print(f"Fault list completa generata: {len(faults_list)} fault totali.")
+    print(f"✅ Fault list generata: {len(faults_list)} fault totali — uno per peso.")
+
 
 def num_experiments_needed(p_estimate=0.5):
     e = SETTINGS.error_margin

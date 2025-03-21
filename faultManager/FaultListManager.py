@@ -49,49 +49,19 @@ class FLManager:
             self.injectable_output_modules_list.append(layer_module)
 
     def get_weight_fault_list(self) -> List[List[WeightFault]]:
-        """
-        Get the fault list for the weights, ensuring exactly NUM_FAULTS_TO_INJECT per weight.
-        """
-        fault_list = []
-        try:
-            with open(f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}', newline='') as f_list:
-                reader = csv.reader(f_list)
-                fault_list = list(reader)[1:]  # Skip header
+        fault_dict = {}
+        csv_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
+        with open(csv_path, newline='') as f:
+            reader = csv.reader(f); next(reader)
+            for row in reader:
+                inj = int(row[0]); layer = row[1]; idx = make_tuple(row[2])
+                bits = list(map(int, row[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]
+                wf = WeightFault(inj, layer, idx, bits)
+                fault_dict.setdefault((layer, idx), []).append(wf)
+        fault_groups = list(fault_dict.values())
+        print(f'✅ Loaded {len(fault_groups)} fault groups (each group={SETTINGS.NUM_FAULTS_TO_INJECT} faults)')
+        return fault_groups
 
-                grouped_faults = {}
-                for fault in fault_list:
-                    tensor_index = make_tuple(fault[2])  # Convert string tuple to actual tuple
-                    layer_name = fault[1]
-                    bits = list(map(int, fault[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]
-
-                    key = (layer_name, tensor_index)
-                    if key not in grouped_faults:
-                        grouped_faults[key] = []
-
-                    weight_fault = WeightFault(
-                        injection=int(fault[0]),
-                        layer_name=layer_name,
-                        tensor_index=tensor_index,
-                        bits=bits
-                    )
-
-                    grouped_faults[key].append(weight_fault)
-
-                grouped_fault_list = list(grouped_faults.values())
-
-            print(f'✅ Loaded {len(grouped_fault_list)} unique fault groups from the fault list')
-
-            # Debugging: Print first few faults to check their structure
-            if len(grouped_fault_list) > 0:
-                print("DEBUG: First 5 fault groups extracted:")
-                for i in range(min(5, len(grouped_fault_list))):
-                    print(f"Fault group {i}: {[f.layer_name for f in grouped_fault_list[i]]}")
-
-        except FileNotFoundError:
-            print(f'❌ ERROR: Fault list file not found: {SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}')
-            exit(-1)
-
-        return grouped_fault_list
 
 
 
