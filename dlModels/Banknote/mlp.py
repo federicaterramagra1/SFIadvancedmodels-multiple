@@ -1,35 +1,24 @@
-import torch
 import torch.nn as nn
-import torch.quantization as quantization
-import numpy
+import torch
 
-SEED = 42
-torch.manual_seed(SEED)
-numpy.random.seed(SEED)
-torch.cuda.manual_seed_all(SEED)
+from torch.ao.quantization import QuantStub, DeQuantStub
 
-class SimpleMLP(nn.Module):
+class SimpleMLP(nn.Module): # 36 pesi
     def __init__(self):
         super(SimpleMLP, self).__init__()
-        self.fc1 = nn.Linear(30, 5)
-        self.fc2 = nn.Linear(5, 2)  # Cambiato da 1 a 2 classi
-        self.quant = quantization.QuantStub()
-        self.dequant = quantization.DeQuantStub()
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+        self.quant = QuantStub()
+        self.fc1 = nn.Linear(4, 6)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(6, 2)
+        self.dequant = DeQuantStub()
 
     def forward(self, x):
         x = self.quant(x)
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)  # Rimosso ReLU qui per output logit a 2 classi
+        x = self.relu(self.fc1(x))
+        x = self.fc2(x)
         x = self.dequant(x)
         return x
+
 
     def quantize_model(self, calib_loader=None):
         from torch.ao.quantization.observer import MinMaxObserver
@@ -54,4 +43,3 @@ class SimpleMLP(nn.Module):
 
         # Converte il modello quantizzato
         torch.quantization.convert(self, inplace=True)
-

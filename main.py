@@ -8,7 +8,7 @@ from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import (
     get_network, get_device, get_loader, get_fault_list, 
     clean_inference, output_definition, fault_list_gen, 
-    csv_summary, num_experiments_needed, select_random_faults
+    csv_summary, num_experiments_needed, select_random_faults, train_model
 )
 # Function to print layer weight dimensions for validation
 def print_layer_dimensions(network):
@@ -27,7 +27,7 @@ def main():
         print('Fault list generation is disabled')
     
     if SETTINGS.FAULTS_INJECTION or SETTINGS.ONLY_CLEAN_INFERENCE:
-        torch.use_deterministic_algorithms(True, warn_only=True)
+        #torch.use_deterministic_algorithms(True, warn_only=True)
 
         device = get_device(use_cuda0=SETTINGS.USE_CUDA_0, use_cuda1=SETTINGS.USE_CUDA_1)
         print(f'Using device {device}')
@@ -39,14 +39,40 @@ def main():
         print(f"Network structure:\n{network}")
         print_layer_dimensions(network)
 
+        # === ADD: Training prima della quantizzazione ===
+        train_loader, val_loader = get_loader(
+            network_name=SETTINGS.NETWORK,
+            batch_size=SETTINGS.BATCH_SIZE,
+            dataset_name=SETTINGS.DATASET
+        )
+
+        # Valuta modello non quantizzato
+        print("Valutazione modello prima della quantizzazione:")
+        clean_inference(network, loader, device, SETTINGS.NETWORK)
+
+
+        #'''
+        print(" Inizio training del modello...")
+        model_save_path = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK}_trained.pth"
+        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+        network = train_model(
+            model=network,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            num_epochs=SETTINGS.NUM_EPOCHS if hasattr(SETTINGS, 'NUM_EPOCHS') else 15,
+            lr=0.001,
+            device=device,
+            save_path=model_save_path
+        )
+        print(" Training completato.\n")
+        #'''
+
         if hasattr(network, 'quantize_model') and callable(network.quantize_model):
-            print("Applying 8-bit static quantization to the network...")
+            print(" Applying 8-bit static quantization to the network...")
             device = 'cpu'
             network.to(device)
-            network.quantize_model()
-            print("Quantization completed. Model is now running on CPU.")
-            
-            print("Available layers in state_dict():", network.state_dict().keys())
+            network.quantize_model(calib_loader=train_loader)
+            print(" Quantization completed. Model is now running on CPU.")
 
         else:
             print("The network does not support quantization. Skipping quantization.")
@@ -96,6 +122,11 @@ def main():
             fault_list_generator=fault_list_generator
         )
 
+        # Limit it to FAULTS_TO_INJECT elements
+        if SETTINGS.FAULTS_TO_INJECT < len(fault_list):
+            import random
+            fault_list = random.sample(fault_list, SETTINGS.FAULTS_TO_INJECT)
+            
         print(f"🔍 Fault list generata: {len(fault_list)} faults trovati.")
 
 

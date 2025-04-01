@@ -107,6 +107,11 @@ class OutputFeatureMapsManager:
             output_to_save = out_tensor.detach().cpu() if save_to_cpu else out_tensor.detach()
 
             # Save the input feature map
+            # Dequantize if necessary
+            if input_to_save.is_quantized:
+                input_to_save = input_to_save.dequantize()
+
+            # Save the input feature map
             if self.__save_compressed:
                 np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
             else:

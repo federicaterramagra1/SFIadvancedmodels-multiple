@@ -30,6 +30,7 @@ import csv
 from tqdm import tqdm
 
 from sklearn.datasets import load_breast_cancer
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
 class UnknownNetworkException(Exception):
@@ -53,9 +54,9 @@ def clean_inference(network, loader, device, network_name):
             data = data.to(device)
             
             network_output = network(data)
-            prediction = torch.topk(network_output, k=1)
+            prediction = torch.argmax(network_output, dim=1)
             scores = network_output.cpu()
-            indices = [int(fault) for fault in prediction.indices]
+            indices = prediction.cpu().tolist()
 
             clean_output_scores.append(scores)
             clean_output_indices.append(indices)
@@ -77,7 +78,64 @@ def clean_inference(network, loader, device, network_name):
         print(f"The DNN wrong predictions are: {num_different_elements}")
         accuracy = (1 - num_different_elements / dataset_size) * 100
         print(f"The final accuracy is: {accuracy:.2f}%")
-        
+
+def train_model(model, train_loader, val_loader=None, num_epochs=50, lr=0.001, device='cpu', save_path=None):
+    print(f"\n Inizio training su {device} per {num_epochs} epoche...")
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = torch.nn.CrossEntropyLoss()
+
+    best_val_acc = 0.0
+
+    for epoch in range(num_epochs):
+        model.train()
+        total_loss = 0
+        correct = 0
+        total = 0
+
+        for batch in train_loader:
+            inputs, labels = batch
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            _, predicted = outputs.max(1)
+            correct += (predicted == labels).sum().item()
+            total += labels.size(0)
+
+        acc = 100 * correct / total
+        print(f" Epoch {epoch+1}/{num_epochs} | Loss: {total_loss:.4f} | Train Accuracy: {acc:.2f}%")
+
+        # Valutazione su validation set
+        if val_loader:
+            model.eval()
+            correct_val = 0
+            total_val = 0
+            with torch.no_grad():
+                for batch in val_loader:
+                    inputs, labels = batch
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    outputs = model(inputs)
+                    _, predicted = outputs.max(1)
+                    correct_val += (predicted == labels).sum().item()
+                    total_val += labels.size(0)
+            val_acc = 100 * correct_val / total_val
+            print(f"🔎 Validation Accuracy: {val_acc:.2f}%")
+
+            # Salva il miglior modello
+            if save_path and val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(model.state_dict(), save_path)
+                print(f" Salvataggio modello migliore in {save_path}")
+
+    print(" Training completato.")
+    return model
+
 def get_network(network_name: str,
                 device: torch.device,
                 dataset_name: str,
@@ -96,11 +154,30 @@ def get_network(network_name: str,
             network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
             # Explicitly attach the quantize method to the wrapped model
             network.quantize_model = network.module.quantize_model
+        elif network_name == 'BiggerMLP':
+            from dlModels.BreastCancer.bigger_mlp import BiggerMLP
+            network = BiggerMLP()
+            # Explicitly attach the quantize method to the network
+            network.quantize_model = network.quantize_model
+            # Wrap the model for quantization
+            network = torch.quantization.QuantWrapper(network)
+            network.qconfig = torch.quantization.get_default_qconfig("fbgemm")  # Suitable for x86 CPUs
+            # Explicitly attach the quantize method to the wrapped model
+            network.quantize_model = network.module.quantize_model
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
-        
-        # Move the model to the specified device
-        network.to(device)
+    elif dataset_name == 'Banknote':
+            from dlModels.Banknote.mlp import SimpleMLP
+            print(f'Loading network {network_name} for Banknote ...')
+            if network_name == 'SimpleMLP':
+                from dlModels.Banknote.mlp import SimpleMLP
+                network = SimpleMLP()
+                network.to(device)
+
+            else:
+                raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+    # Move the model to the specified device
+    network.to(device)
 
     network.eval()
     
@@ -121,8 +198,21 @@ def get_loader(network_name: str,
     that maximize this network accuracy. If not specified, images are selected at random
     :return: The DataLoader
     """
-
+    if dataset_name == 'Banknote':
+        from utils import load_banknote_dataset
+        print('Loading Banknote dataset...')
+        train_loader, test_loader, _ = load_banknote_dataset(batch_size=batch_size)
+        return train_loader, test_loader
+        
     if network_name == 'SimpleMLP':
+        # Load Breast Cancer dataset with the correct parameters
+        train_loader, val_loader, test_loader = load_breastCancer_datasets(
+            train_batch_size=batch_size,
+            test_batch_size=batch_size
+        )
+        return train_loader, test_loader  # Return only train and test loaders
+
+    if network_name == 'BiggerMLP':
         # Load Breast Cancer dataset with the correct parameters
         train_loader, val_loader, test_loader = load_breastCancer_datasets(
             train_batch_size=batch_size,
@@ -559,6 +649,32 @@ def load_breastCancer_datasets(train_batch_size=32, train_split=0.8, test_batch_
 
     return train_loader, val_loader, test_loader
 
+def load_banknote_dataset(test_size=0.2, batch_size=32):
+    url = "https://archive.ics.uci.edu/ml/machine-learning-databases/00267/data_banknote_authentication.txt"
+    column_names = ["variance", "skewness", "curtosis", "entropy", "class"]
+    df = pd.read_csv(url, header=None, names=column_names)
+
+    X = df.drop("class", axis=1).values
+    y = df["class"].values
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=test_size, random_state=42)
+
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+    return train_loader, test_loader, (X_test_tensor, y_test_tensor)
+
 def load_from_dict(network, device, path, function=None):
     if '.th' in path:
         state_dict = torch.load(path, map_location=device)['state_dict']
@@ -695,13 +811,13 @@ def output_definition(test_loader, batch_size):
         print(f'Loading: {file_name}')
 
         if not os.path.exists(file_name):
-            print(f"❌ ERROR: Faulty output file {file_name} is missing!")
+            print(f" ERROR: Faulty output file {file_name} is missing!")
             continue
 
         loaded_faulty_output = np.load(file_name, allow_pickle=True)
 
         if loaded_faulty_output.shape != faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :].shape:
-            print(f"❌ ERROR: Shape mismatch in faulty output for batch {i}!")
+            print(f" ERROR: Shape mismatch in faulty output for batch {i}!")
             print(f"Expected: {faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :].shape}, Got: {loaded_faulty_output.shape}")
 
         faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :] = loaded_faulty_output
@@ -785,7 +901,7 @@ def output_definition(test_loader, batch_size):
     print(f'% Masked Faults: {100 * masked / (masked + not_critical + critical):.2f} %')
     print('Not Critical Faults:', not_critical)
     print(f'% Not Critical: {100 * not_critical / (masked + not_critical + critical):.2f} %')
-    print('SDC-1:', critical)
+    print('Critical Faults (SDC-1 + SDC-10 + SDC-20):', critical)
     print(f'% Critical: {100 * critical / (masked + not_critical + critical):.2f} %')
     print(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %')
 
@@ -874,49 +990,64 @@ import SETTINGS
 import itertools
 import csv
 import os
+
 def fault_list_gen():
+
     random.seed(SETTINGS.SEED)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    network = get_network(network_name=SETTINGS.NETWORK_NAME, 
-                          device=device, 
+    network = get_network(network_name=SETTINGS.NETWORK_NAME,
+                          device=device,
                           dataset_name=SETTINGS.DATASET_NAME)
     network.to(device)
 
     bit_width = 8  # 8-bit quantization
-    faults_list = []
-    injection_counter = 0
+    bit_positions = list(range(bit_width))
+    all_bit_faults = []  # contiene tutte le tuple (layer, index, bit)
 
-    # Trova tutti i tensori di pesi
-    layer_params_list = [
-        (name.replace('.weight', ''), param.shape)
-        for name, param in network.named_parameters() if 'weight' in name
-    ]
-
-    for layer_name, param_shape in layer_params_list:
-        for tensor_index in itertools.product(*(range(s) for s in param_shape)):
-            all_combinations = list(itertools.combinations(range(bit_width), SETTINGS.NUM_FAULTS_TO_INJECT))
-            selected_bits = random.choice(all_combinations)  # Ne sceglie solo UNA
-
-            faults_list.append([
-                injection_counter,
-                layer_name,
-                tensor_index,
-                ','.join(map(str, selected_bits))
-            ])
-            injection_counter += 1
-
+    # 1. Estrai tutti i singoli bit flip possibili e salvali in un CSV intermedio
+    intermediate_singles_path = f"{SETTINGS.FAULT_LIST_PATH}/single_faults.csv"
     os.makedirs(SETTINGS.FAULT_LIST_PATH, exist_ok=True)
-    csv_filename = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
-    header = ['Injection', 'Layer', 'TensorIndex', 'Bit']
+    with open(intermediate_singles_path, 'w', newline='') as single_file:
+        writer = csv.writer(single_file)
+        writer.writerow(['Injection', 'Layer', 'TensorIndex', 'Bit'])
+        inj_id = 0
+        for name, param in network.named_parameters():
+            if 'weight' in name:
+                layer_name = name.replace('.weight', '')
+                shape = param.shape
+                for idx in itertools.product(*[range(s) for s in shape]):
+                    for bit in bit_positions:
+                        all_bit_faults.append((layer_name, idx, bit))
+                        writer.writerow([inj_id, layer_name, idx, bit])
+                        inj_id += 1
 
-    with open(csv_filename, 'w', newline='') as csv_file:
-        csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(header)
-        csv_writer.writerows(faults_list)
+    print(f" Salvati {len(all_bit_faults)} bit flip singoli in {intermediate_singles_path}")
 
-    print(f"✅ Fault list generata: {len(faults_list)} fault totali — uno per peso.")
+    # 2. Genera tutte le combinazioni da NUM_FAULTS_TO_INJECT e salvale in CSV intermedio
+    intermediate_combos_path = f"{SETTINGS.FAULT_LIST_PATH}/combinations_{SETTINGS.NUM_FAULTS_TO_INJECT}.csv"
+    combinations = list(itertools.combinations(all_bit_faults, SETTINGS.NUM_FAULTS_TO_INJECT))
 
+    with open(intermediate_combos_path, 'w', newline='') as combo_file:
+        writer = csv.writer(combo_file)
+        writer.writerow(['GroupID'] + [f"Fault{i+1}" for i in range(SETTINGS.NUM_FAULTS_TO_INJECT)])
+        for i, combo in enumerate(combinations):
+            row = [i] + [f"{layer},{idx},{bit}" for (layer, idx, bit) in combo]
+            writer.writerow(row)
+
+    print(f" Salvate {len(combinations)} combinazioni di {SETTINGS.NUM_FAULTS_TO_INJECT} bit in {intermediate_combos_path}")
+
+    # 3. Seleziona casualmente FAULTS_TO_INJECT combinazioni e salvale nel CSV finale
+    selected = random.sample(combinations, SETTINGS.FAULTS_TO_INJECT)
+    final_csv_path = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
+    with open(final_csv_path, 'w', newline='') as final_file:
+        writer = csv.writer(final_file)
+        writer.writerow(['Injection', 'Layer', 'TensorIndex', 'Bit'])
+        for inj_id, combo in enumerate(selected):
+            for layer, idx, bit in combo:
+                writer.writerow([inj_id, layer, idx, bit])
+
+    print(f" Fault list finale scritta in {final_csv_path} con {SETTINGS.FAULTS_TO_INJECT} iniezioni da {SETTINGS.NUM_FAULTS_TO_INJECT} bit flip")
 
 def num_experiments_needed(p_estimate=0.5):
     e = SETTINGS.error_margin

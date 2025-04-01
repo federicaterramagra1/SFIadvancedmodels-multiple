@@ -43,7 +43,7 @@ class WeightFaultInjector:
         self._modify_bit(layer_name, tensor_index, bits, mode="stuck", stuck_value=value)
 
     def _modify_bit(self, layer_name, tensor_index, bits, mode="flip", stuck_value=None):
-        bits = [b for b in bits if b >= 0]  # puoi lasciare >= 0 o >= 4 se vuoi solo i bit alti
+        bits = [b for b in bits if b < 4]  # puoi lasciare >= 0 o >= 4 se vuoi solo i bit alti
         if not bits:
             return
 
@@ -66,7 +66,7 @@ class WeightFaultInjector:
 
                 quantized_value = max(-128, min(127, quantized_value))
                 print(f" AFTER:  {layer_name}[{tensor_index}] = {quantized_value} ({bin(quantized_value)})")
-
+                
                 new_quant_tensor = torch.quantize_per_tensor(
                     torch.tensor([quantized_value], dtype=torch.float32),
                     scale=weight_tensor.q_scale(),
@@ -75,6 +75,8 @@ class WeightFaultInjector:
                 )
                 weight_tensor[tensor_index] = new_quant_tensor.dequantize()
                 self.network.load_state_dict(state_dict)
+                
+                print(f" Dequantized value: {new_quant_tensor.dequantize().item()} | Scale: {weight_tensor.q_scale()}, Zero Point: {weight_tensor.q_zero_point()}")
 
         except Exception as e:
             print(f" ERROR modifying {layer_name}, index {tensor_index}: {e}")

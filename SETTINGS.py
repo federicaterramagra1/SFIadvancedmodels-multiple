@@ -7,6 +7,7 @@ from dlModels.CIFAR10 import resnet_cifar10,mobilenetv2_cifar10, densenet_cifar1
 from dlModels.GTSRB import resnet_GTSRB, vgg_GTSRB, densenet_GTSRB
 from dlModels.CIFAR100 import densenet_cifar100, resnet_cifar100, googlenet_cifar100
 from dlModels.BreastCancer.mlp import SimpleMLP
+from dlModels.Banknote.mlp import SimpleMLP
 
 '''
 FAULT_MODEL available: 'stuck-at_params', 'byzantine_neuron'
@@ -22,11 +23,11 @@ DATASET available: 'BreastCancer'
 '''
 
 # network and dataset to use
-DATASET_NAME = 'BreastCancer'
+DATASET_NAME = 'Banknote'
 NETWORK_NAME = 'SimpleMLP'
 
 # Fault injection settings
-NUM_FAULTS_TO_INJECT = 3  # Number of faults to inject simultaneously
+NUM_FAULTS_TO_INJECT = 2  # Number of faults to inject simultaneously
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = False
@@ -46,7 +47,7 @@ FI_ANALYSIS_SUMMARY = True
 
 
 # FAULT LIST
-SEED = 38
+SEED = 42
 
 # FAULT LIST PARAMETERS
 error_margin = 0.01
@@ -63,7 +64,7 @@ FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 
 #fault to inject in the model from the faul list
-FAULTS_TO_INJECT = 20
+FAULTS_TO_INJECT = 40
 
 # use the GPU is available
 USE_CUDA_0 = True
@@ -76,7 +77,7 @@ NO_LOG_RESULTS = False
 BATCH_SIZE = 64
 
 # fault model to use (check the top of the file for the available models)
-FAULT_MODEL = 'stuck-at_params'
+FAULT_MODEL = 'bit-flip'
 
 # dataset to use (check the top of the file for the available datasets)
 DATASET = DATASET_NAME
@@ -123,8 +124,9 @@ FAULTY_FM_FOLDER = f'output/faulty_feature_maps/{DATASET}/{NETWORK}/batch_{BATCH
 FAULTY_OUTPUT_FOLDER = f'output/faulty_output/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}'
 
 # MODULES TO SAVE OFM AND IFM
-MODULE_CLASSES = (torch.nn.Linear)
-MODULE_CLASSES_FAULT_LIST = (torch.nn.Linear)
+#MODULE_CLASSES = (torch.nn.Linear)
+MODULE_CLASSES = (torch.nn.Linear, torch.nn.quantized.Linear)
+MODULE_CLASSES_FAULT_LIST = (torch.nn.Linear, torch.nn.Conv2d)
 
 # DATASET PATHS
 DATASET_PATH = f'Datasets/'
