@@ -3,22 +3,13 @@ import csv
 import numpy as np
 from tqdm import tqdm
 from ast import literal_eval as make_tuple
+from collections import defaultdict
 from typing import Type, List
 from torch.nn import Module
 import SETTINGS
 from faultManager.WeightFault import WeightFault
 from faultManager.NeuronFault import NeuronFault
 from faultManager.modules.InjectableOutputModule import injectable_output_module_class
-import torch
-import os
-import csv
-import numpy as np
-from tqdm import tqdm
-from ast import literal_eval as make_tuple
-from typing import Type, List
-from torch.nn import Module
-import SETTINGS
-from faultManager.WeightFault import WeightFault
 import torch
 
 class FLManager:
@@ -49,23 +40,18 @@ class FLManager:
             self.injectable_output_modules_list.append(layer_module)
 
     def get_weight_fault_list(self) -> List[List[WeightFault]]:
-        fault_dict = {}
+        fault_groups_dict = defaultdict(list)
         csv_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
         with open(csv_path, newline='') as f:
             reader = csv.reader(f); next(reader)
             for row in reader:
-                inj = int(row[0]); layer = row[1]; idx = make_tuple(row[2])
-                bits = list(map(int, row[3].split(',')))[:SETTINGS.NUM_FAULTS_TO_INJECT]
-                wf = WeightFault(inj, layer, idx, bits)
-                fault_dict.setdefault((layer, idx), []).append(wf)
-        fault_groups = list(fault_dict.values())
+                inj = int(row[0])
+                layer = row[1]
+                idx = make_tuple(row[2])
+                bit = int(row[3])
+                fault = WeightFault(injection=inj, layer_name=layer, tensor_index=idx, bits=[bit])
+                fault_groups_dict[inj].append(fault)
+
+        fault_groups = list(fault_groups_dict.values())
         print(f'✅ Loaded {len(fault_groups)} fault groups (each group={SETTINGS.NUM_FAULTS_TO_INJECT} faults)')
         return fault_groups
-
-
-
-
-
-
-
-

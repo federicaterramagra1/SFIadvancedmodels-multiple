@@ -865,20 +865,17 @@ def output_definition(test_loader, batch_size):
                         delta = abs(faulty_confidence - clean_confidence) / max(1e-8, abs(clean_confidence))
 
                         if delta >= 0.2:
-                            critical += 1
-                            output_results_list.append('3')  # SDC-20
+                            output_results_list.append('3')  # SDC-20 (non critico)
                             csv_writer.writerow([z, i, j, '3'])
                         elif delta >= 0.1:
-                            critical += 1
-                            output_results_list.append('2')  # SDC-10
+                            output_results_list.append('2')  # SDC-10 (non critico)
                             csv_writer.writerow([z, i, j, '2'])
                         else:
-                            not_critical += 1
                             output_results_list.append('1')  # Not Critical
                             csv_writer.writerow([z, i, j, '1'])
 
                     else:
-                        critical += 1
+                        critical += 1  # Solo SDC-1 è critico
                         output_results_list.append('4')  # SDC-1 (Top-1 changed)
                         csv_writer.writerow([z, i, j, '4'])
 
@@ -886,43 +883,33 @@ def output_definition(test_loader, batch_size):
     del loaded_clean_output
     del faulty_tensor_data
 
-    # Reload CSV to confirm changes
-    if SETTINGS.RAM_LIMIT:
-        print('Loading CSV file...')
-        df = pd.read_csv(output_csv_path)
-        output_count = df['output'].value_counts()
+    # Calcola i contatori in base ai risultati scritti
+    all_outputs = output_results_list
+    not_critical = sum(o in ['1', '2', '3'] for o in all_outputs)
+    critical = sum(o == '4' for o in all_outputs)
+    masked = sum(o == '0' for o in all_outputs)
 
-        masked = output_count.get(0, 0)
-        not_critical = output_count.get(1, 0)
-        critical = output_count.get(2, 0)
+    total_outputs = masked + not_critical + critical
 
-    print(f'Total outputs: {masked + not_critical + critical}')
+    print(f'Total outputs: {total_outputs}')
     print('Masked:', masked)
-    print(f'% Masked Faults: {100 * masked / (masked + not_critical + critical):.2f} %')
+    print(f'% Masked Faults: {100 * masked / total_outputs:.2f} %')
     print('Not Critical Faults:', not_critical)
-    print(f'% Not Critical: {100 * not_critical / (masked + not_critical + critical):.2f} %')
-    print('Critical Faults (SDC-1 + SDC-10 + SDC-20):', critical)
-    print(f'% Critical: {100 * critical / (masked + not_critical + critical):.2f} %')
+    print(f'% Not Critical: {100 * not_critical / total_outputs:.2f} %')
+    print('Critical Faults (SDC-1):', critical)
+    print(f'% Critical: {100 * critical / total_outputs:.2f} %')
     print(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %')
 
-    if masked + not_critical + critical == 0:
-        print("⚠️ Warning: No faults were recorded, skipping percentage calculations.")
-        percent_masked = percent_not_critical = percent_critical = 0
-    else:
-        percent_masked = 100 * masked / (masked + not_critical + critical)
-        percent_not_critical = 100 * not_critical / (masked + not_critical + critical)
-        percent_critical = 100 * critical / (masked + not_critical + critical)
-
-    # Save final statistics
+    # Salva su file
     fault_statistics_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "fault_statistics.txt")
     with open(fault_statistics_path, 'w') as file:
-        file.write(f'Total outputs: {masked + not_critical + critical}\n')
+        file.write(f'Total outputs: {total_outputs}\n')
         file.write(f'Masked: {masked}\n')
-        file.write(f'% Masked Faults: {percent_masked:.2f} %\n')
+        file.write(f'% Masked Faults: {100 * masked / total_outputs:.2f} %\n')
         file.write(f'Not Critical Faults: {not_critical}\n')
-        file.write(f'% Not Critical: {percent_not_critical:.2f} %\n')
+        file.write(f'% Not Critical: {100 * not_critical / total_outputs:.2f} %\n')
         file.write(f'SDC-1: {critical}\n')
-        file.write(f'% Critical: {percent_critical:.2f} %\n')
+        file.write(f'% Critical: {100 * critical / total_outputs:.2f} %\n')
         file.write(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %\n')
 
     return output_results_list
