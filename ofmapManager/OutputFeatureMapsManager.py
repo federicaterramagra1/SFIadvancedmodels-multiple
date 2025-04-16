@@ -176,22 +176,14 @@ class OutputFeatureMapsManager:
         self.input_feature_maps_size = self.__input_feature_maps_size / len(self.loader)
         self.output_feature_maps_size = self.__output_feature_maps_size / len(self.loader)
 
-    def load_clean_output(self,
-                          force_reload: bool = False) -> None:
-        """
-        Load the clean output of the network. If the file is not found, compute the clean output (and the clean output
-        feature maps)
-        """
-
-        if SETTINGS.SAVE_CLEAN_OFM == False:
+    def load_clean_output(self, force_reload: bool = False) -> None:
+        if not force_reload:
             try:
                 self.clean_output = [torch.tensor(tensor.astype(np.float32), device=self.device)
                                     for tensor in np.load(self.__clean_output_path, allow_pickle=True)]
-                
+                return
             except FileNotFoundError:
-                print('No previous clean output found, starting clean inference...')
-                self.save_intermediate_layer_outputs()
-        else:
-            
-            print('No previous clean output or clean feature maps found, starting clean inference...')
-            self.save_intermediate_layer_outputs()
+                print('No previous clean output found.')
+
+        print('Generating clean output...')
+        self.save_intermediate_layer_outputs()

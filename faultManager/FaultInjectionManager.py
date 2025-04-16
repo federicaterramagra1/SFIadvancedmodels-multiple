@@ -93,13 +93,13 @@ class FaultInjectionManager:
         print(f"DEBUG: Received faults - {faults}")  # Print for debugging
 
         if not isinstance(faults, list):
-            print(f"❌ ERROR: Expected a list, but got {type(faults)} - {faults}")
+            print(f" ERROR: Expected a list, but got {type(faults)} - {faults}")
             return  # Avoid crashing the program
 
         if all(isinstance(fault, WeightFault) for fault in faults):
             flattened_faults = faults  # Already a correct list
         else:
-            print(f"❌ ERROR: Found non-WeightFault elements in faults: {faults}")
+            print(f" ERROR: Found non-WeightFault elements in faults: {faults}")
             return
 
         print(f"DEBUG: Injecting faults: {[f.layer_name for f in flattened_faults]}")  # Print fault details

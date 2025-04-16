@@ -79,6 +79,35 @@ def clean_inference(network, loader, device, network_name):
         accuracy = (1 - num_different_elements / dataset_size) * 100
         print(f"The final accuracy is: {accuracy:.2f}%")
 
+def faulty_inference(network, loader, device, network_name, faults_injected=False):
+    faulty_output_indices = list()
+    true_labels = list()
+    total = 0
+    wrong = 0
+
+    with torch.no_grad():
+        pbar = tqdm(loader, colour='red', desc='Faulty Run')
+
+        for batch_id, (data, label) in enumerate(pbar):
+            data = data.to(device)
+            label = label.to(device)
+
+            output = network(data)
+            pred = torch.argmax(output, dim=1)
+
+            total += len(label)
+            wrong += (pred != label).sum().item()
+
+            faulty_output_indices.append(pred.cpu())
+            true_labels.append(label.cpu())
+
+    accuracy = (1 - wrong / total) * 100
+    print(f"\nFaulty inference results on device: {device}")
+    print(f"Model: {network_name}")
+    print(f"Wrong predictions: {wrong}")
+    print(f"Faulty model accuracy: {accuracy:.2f}%")
+
+
 def train_model(model, train_loader, val_loader=None, num_epochs=50, lr=0.001, device='cpu', save_path=None):
     print(f"\n Inizio training su {device} per {num_epochs} epoche...")
     model = model.to(device)
@@ -649,7 +678,7 @@ def load_breastCancer_datasets(train_batch_size=32, train_split=0.8, test_batch_
 
     return train_loader, val_loader, test_loader
 
-def load_banknote_dataset(test_size=0.2, batch_size=32):
+def load_banknote_dataset(batch_size=32):
     url = "https://archive.ics.uci.edu/ml/machine-learning-databases/00267/data_banknote_authentication.txt"
     column_names = ["variance", "skewness", "curtosis", "entropy", "class"]
     df = pd.read_csv(url, header=None, names=column_names)
@@ -660,8 +689,12 @@ def load_banknote_dataset(test_size=0.2, batch_size=32):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=test_size, random_state=42)
+    # Train su 348, test sul resto (1372 - 348 = 1024)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, train_size=348, random_state=42, stratify=y
+    )
 
+    # Conversione in tensori PyTorch
     X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train, dtype=torch.long)
     X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
@@ -671,9 +704,10 @@ def load_banknote_dataset(test_size=0.2, batch_size=32):
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, drop_last=True)
 
     return train_loader, test_loader, (X_test_tensor, y_test_tensor)
+
 
 def load_from_dict(network, device, path, function=None):
     if '.th' in path:
@@ -763,159 +797,95 @@ import SETTINGS
 from tqdm import tqdm
 
 def output_definition(test_loader, batch_size):
-    masked = 0
-    critical = 0
-    not_critical = 0
-    dataset_size = 0    
-    output_results_list = []
-    batch_info_list = []
+    import os, csv
+    import numpy as np
+    from tqdm import tqdm
+    from utils import count_batch
 
-    pbar = tqdm(test_loader, colour='green', desc=f'Saving test labels from {SETTINGS.DATASET_NAME} {SETTINGS.NETWORK_NAME} {batch_size}', ncols=shutil.get_terminal_size().columns)
-    
-    for batch_id, batch in enumerate(pbar):
-        _, label = batch
-        label_np = label.numpy()
-        batch_info = [[batch_id, j, label_np[j].item()] for j in range(len(label_np))]
-        batch_info_list.extend(batch_info)
-        dataset_size += len(label_np)
-
-    batch_info_array = np.array(batch_info_list) 
-
-    del test_loader
-    del batch_info_list
-
-    # Load clean tensor
     clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
-    print('Loading clean outputs...')
     if not os.path.exists(clean_output_path):
-        print(f"❌ ERROR: Clean output file {clean_output_path} is missing!")
+        print(f" ERROR: Clean output file {clean_output_path} is missing!")
         return
-    
-    loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
 
-    # Define faulty output paths
+    print("🔍 Caricamento output clean...")
+    loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
+    number_of_clean_batches = len(loaded_clean_output)
+
     batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
     batch_path = os.path.join(batch_folder, 'batch_0.npy')
-    number_of_batch, n_outputs, n_faults = count_batch(batch_folder, batch_path)
+    number_of_batch, n_outputs, max_faults = count_batch(batch_folder, batch_path)
 
-    print(f'Number of batches: {number_of_batch}')
-    dim1, dim2 = n_faults, number_of_batch
-    start_batch = SETTINGS.BATCH_START if SETTINGS.RAM_LIMIT else 0
-    dim3 = int(batch_size)  
+    number_of_batch = min(number_of_batch, number_of_clean_batches)
+    print(f"✅ Clean output shape: {loaded_clean_output.shape} (using {number_of_batch} batches)")
+
+    n_faults = max_faults if SETTINGS.FAULTS_TO_INJECT == -1 else SETTINGS.FAULTS_TO_INJECT
+    dim3 = batch_size
 
     faulty_tensor_data = np.zeros((n_faults, number_of_batch, dim3, n_outputs), dtype=np.float32)
 
-    print('Loading faulty outputs...')
-    for i in tqdm(range(start_batch, dim2)):
-        file_name = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL, f'batch_{i}.npy')
-        print(f'Loading: {file_name}')
-
-        if not os.path.exists(file_name):
-            print(f" ERROR: Faulty output file {file_name} is missing!")
+    print("🔄 Caricamento output faultati...")
+    for i in range(number_of_batch):
+        path = os.path.join(batch_folder, f'batch_{i}.npy')
+        if not os.path.exists(path):
+            print(f"⚠️ File mancante: {path}")
             continue
 
-        loaded_faulty_output = np.load(file_name, allow_pickle=True)
+        faulty = np.load(path, allow_pickle=True)
+        actual_faults = min(n_faults, faulty.shape[0])
+        actual_samples = min(dim3, faulty.shape[1])
+        faulty_tensor_data[:actual_faults, i, :actual_samples, :] = faulty[:actual_faults, :actual_samples, :]
 
-        if loaded_faulty_output.shape != faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :].shape:
-            print(f" ERROR: Shape mismatch in faulty output for batch {i}!")
-            print(f"Expected: {faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :].shape}, Got: {loaded_faulty_output.shape}")
+    print(f"✅ Shape finale tensor faultati: {faulty_tensor_data.shape}")
 
-        faulty_tensor_data[:, i, :loaded_faulty_output.shape[1], :] = loaded_faulty_output
-
-    print('Shape of faulty tensor:', faulty_tensor_data.shape)
+    output_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
 
-    clean_output_match_counter = 0
-    faulty_output_match_counter = 0
+    masked = 0
+    not_critical = 0
+    critical = 0
 
-    # Open CSV
-    output_csv_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
-    mode = 'w' if SETTINGS.BATCH_START == 0 or not SETTINGS.RAM_LIMIT else 'a'
-    with open(output_csv_path, mode=mode) as file_csv:
-        csv_writer = csv.writer(file_csv)
-        if mode == 'w':
-            csv_writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
+    with open(output_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
 
+        for z in tqdm(range(n_faults), desc="Analysis"):
+            for i in range(number_of_batch):
+                clean_batch = loaded_clean_output[i]
+                for j in range(min(len(clean_batch), dim3)):
+                    clean = clean_batch[j]
+                    faulty = faulty_tensor_data[z, i, j]
+                    clean_top = np.argmax(clean)
+                    faulty_top = np.argmax(faulty)
+                    delta = abs(faulty[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
 
-        print(f'Faults: {n_faults}, Batches: {number_of_batch}')
-
-        # Iterate over faults
-        for z in tqdm(range(dim1), desc="Output definition progress"):
-            for i in range(start_batch, dim2):
-                for j in range(min(dim3, loaded_clean_output[i].shape[0])):
-                    clean_output_argmax = np.argmax(loaded_clean_output[i][j, :])
-                    faulty_output_argmax = np.argmax(faulty_tensor_data[z, i, j, :])
-
-                    clean_output_label = batch_info_array[(batch_info_array[:, 0] == i) & (batch_info_array[:, 1] == j), 2]
-                    clean_output_label_value = int(clean_output_label[0]) if clean_output_label.size > 0 else -1
-                    faulty_output_match = (faulty_output_argmax == clean_output_label_value)
-
-                    if faulty_output_match:
-                        faulty_output_match_counter += 1
-
-                    clean_confidence = loaded_clean_output[i][j, clean_output_argmax]
-                    faulty_confidence = faulty_tensor_data[z, i, j, clean_output_argmax]
-
-                    if np.array_equal(loaded_clean_output[i][j, :], faulty_tensor_data[z, i, j, :]):
+                    if np.array_equal(clean, faulty):
+                        writer.writerow([z, i, j, '0'])
                         masked += 1
-                        output_results_list.append('0')  # Masked
-                        csv_writer.writerow([z, i, j, '0'])
-
-                    elif clean_output_argmax == faulty_output_argmax:
-                        delta = abs(faulty_confidence - clean_confidence) / max(1e-8, abs(clean_confidence))
-
+                    elif clean_top == faulty_top:
                         if delta >= 0.2:
-                            output_results_list.append('3')  # SDC-20 (non critico)
-                            csv_writer.writerow([z, i, j, '3'])
+                            writer.writerow([z, i, j, '3'])
                         elif delta >= 0.1:
-                            output_results_list.append('2')  # SDC-10 (non critico)
-                            csv_writer.writerow([z, i, j, '2'])
+                            writer.writerow([z, i, j, '2'])
                         else:
-                            output_results_list.append('1')  # Not Critical
-                            csv_writer.writerow([z, i, j, '1'])
-
+                            writer.writerow([z, i, j, '1'])
+                        not_critical += 1
                     else:
-                        critical += 1  # Solo SDC-1 è critico
-                        output_results_list.append('4')  # SDC-1 (Top-1 changed)
-                        csv_writer.writerow([z, i, j, '4'])
+                        writer.writerow([z, i, j, '4'])
+                        critical += 1
 
+    total = masked + not_critical + critical
 
-    del loaded_clean_output
-    del faulty_tensor_data
-
-    # Calcola i contatori in base ai risultati scritti
-    all_outputs = output_results_list
-    not_critical = sum(o in ['1', '2', '3'] for o in all_outputs)
-    critical = sum(o == '4' for o in all_outputs)
-    masked = sum(o == '0' for o in all_outputs)
-
-    total_outputs = masked + not_critical + critical
-
-    print(f'Total outputs: {total_outputs}')
-    print('Masked:', masked)
-    print(f'% Masked Faults: {100 * masked / total_outputs:.2f} %')
-    print('Not Critical Faults:', not_critical)
-    print(f'% Not Critical: {100 * not_critical / total_outputs:.2f} %')
-    print('Critical Faults (SDC-1):', critical)
-    print(f'% Critical: {100 * critical / total_outputs:.2f} %')
-    print(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %')
-
-    # Salva su file
-    fault_statistics_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "fault_statistics.txt")
-    with open(fault_statistics_path, 'w') as file:
-        file.write(f'Total outputs: {total_outputs}\n')
-        file.write(f'Masked: {masked}\n')
-        file.write(f'% Masked Faults: {100 * masked / total_outputs:.2f} %\n')
-        file.write(f'Not Critical Faults: {not_critical}\n')
-        file.write(f'% Not Critical: {100 * not_critical / total_outputs:.2f} %\n')
-        file.write(f'SDC-1: {critical}\n')
-        file.write(f'% Critical: {100 * critical / total_outputs:.2f} %\n')
-        file.write(f'TOP-1 faulty accuracy: {100 * faulty_output_match_counter / (dataset_size * n_faults):.2f} %\n')
-
-    return output_results_list
-
-
+    print(f"\n📊 Output Definition Summary")
+    print(f"Total: {total}")
+    print(f"Masked: {masked} ({masked / total:.2%})")
+    print(f"Non-Critical: {not_critical} ({not_critical / total:.2%})")
+    print(f"Critical (SDC-1): {critical} ({critical / total:.2%})")
+    
 def csv_summary():
+    import pandas as pd
+    import os
+    from tqdm import tqdm
+
     network_name = SETTINGS.NETWORK_NAME
 
     input_file_path1 = f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv'
@@ -928,44 +898,53 @@ def csv_summary():
 
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
 
-    print(f'reading {network_name} input file 1 ...')
     try:
         df = pd.read_csv(input_file_path1)
-        print('done')
+        print('Output analysis loaded.')
     except FileNotFoundError:
         print(f"File not found: {input_file_path1}")
         return
 
-    print(f'reading FL input file 2 ...')
     try:
-        df2 = pd.read_csv(fault_list_path)
-        print('done')
+        fault_df = pd.read_csv(fault_list_path)
+        print('Fault list loaded.')
     except FileNotFoundError:
         print(f"File not found: {fault_list_path}")
         return
 
-    masked_list = []
-    non_critic_list = []
-    critical_list = []
+    grouped = fault_df.groupby("Injection")
+    output_rows = []
 
-    print('Calculating statistics per fault...')
-    for i in tqdm(range(len(df2))):
-        fault_outputs = df[df['Fault_ID'] == i]['output']
+    for inj_id, group in tqdm(grouped, total=len(grouped), desc="Calculating summary"):
+        fault_outputs = df[df['Fault_ID'] == inj_id]['output']
 
         masked = (fault_outputs == 0).sum()
-        non_critic = (fault_outputs == 1).sum()
-        critical = fault_outputs.isin([2, 3, 4]).sum()
+        non_critical = fault_outputs.isin([1, 2, 3]).sum()
+        critical = (fault_outputs == 4).sum()
 
-        masked_list.append(masked)
-        non_critic_list.append(non_critic)
-        critical_list.append(critical)
+        layers = group['Layer'].tolist()
+        indices = group['TensorIndex'].tolist()
+        bits = group['Bit'].tolist()
 
-    df2['masked'] = masked_list
-    df2['non_critical'] = non_critic_list
-    df2['critical'] = critical_list
+        total = masked + non_critical + critical
+        accuracy = (masked + non_critical) / total if total > 0 else 0.0
+        failure_rate = critical / total if total > 0 else 0.0
 
-    df2.to_csv(output_file_path, index=False)
-    print(f"✅ Summary CSV saved to {output_file_path}")
+        output_rows.append({
+            'Injection': inj_id,
+            'Layers': str(layers),
+            'TensorIndices': str(indices),
+            'Bits': str(bits),
+            'masked': masked,
+            'non_critical': non_critical,
+            'critical': critical,
+            'accuracy': round(accuracy, 4),
+            'failure_rate': round(failure_rate, 4)
+        })
+
+    summary_df = pd.DataFrame(output_rows)
+    summary_df.to_csv(output_file_path, index=False)
+    print(f"Summary CSV saved to {output_file_path}")
 
 import numpy as np
 import random
@@ -1024,8 +1003,15 @@ def fault_list_gen():
 
     print(f" Salvate {len(combinations)} combinazioni di {SETTINGS.NUM_FAULTS_TO_INJECT} bit in {intermediate_combos_path}")
 
-    # 3. Seleziona casualmente FAULTS_TO_INJECT combinazioni e salvale nel CSV finale
-    selected = random.sample(combinations, SETTINGS.FAULTS_TO_INJECT)
+    # 3. Seleziona combinazioni da salvare: tutte o campione random
+    if SETTINGS.FAULTS_TO_INJECT == -1:
+        selected = combinations
+        print(f" Fault list ESAUSTIVA: {len(selected)} combinazioni da {SETTINGS.NUM_FAULTS_TO_INJECT} bit flip.")
+    else:
+        selected = random.sample(combinations, SETTINGS.FAULTS_TO_INJECT)
+        print(f" Fault list RANDOM: {SETTINGS.FAULTS_TO_INJECT} combinazioni da {SETTINGS.NUM_FAULTS_TO_INJECT} bit flip.")
+
+    # 4. Scrivi il file finale
     final_csv_path = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
     with open(final_csv_path, 'w', newline='') as final_file:
         writer = csv.writer(final_file)
@@ -1034,7 +1020,8 @@ def fault_list_gen():
             for layer, idx, bit in combo:
                 writer.writerow([inj_id, layer, idx, bit])
 
-    print(f" Fault list finale scritta in {final_csv_path} con {SETTINGS.FAULTS_TO_INJECT} iniezioni da {SETTINGS.NUM_FAULTS_TO_INJECT} bit flip")
+    print(f" Fault list finale scritta in {final_csv_path} con {len(selected)} iniezioni.")
+
 
 def num_experiments_needed(p_estimate=0.5):
     e = SETTINGS.error_margin

@@ -63,8 +63,8 @@ FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
 
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 
-#fault to inject in the model from the faul list
-FAULTS_TO_INJECT = 40
+#fault to inject in the model from the faul list, insert -1 to do an exhaustive campaign
+FAULTS_TO_INJECT = -1
 
 # use the GPU is available
 USE_CUDA_0 = True
