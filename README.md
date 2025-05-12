@@ -1,157 +1,154 @@
 # Fault Injection Tool for the Reliability Assessment of Deep Learning Algorithms
 
 ## Overview
-**SFIadvancedmodels** is an open-source software designed to test the resilience of deep learning algorithms against the occurrence of random-hardware faults. The intent of the framework is to execute advanced statistical fault injection analyses by extending the available and known fault models in the literature.
+**SFIadvancedmodels** is an open-source software designed to test the resilience of deep learning algorithms against random hardware faults. The intent of the framework is to perform advanced statistical fault injection analyses by extending existing fault models available in the literature.
 
-## Projects structure
-
+## Project Structure
 This project is structured as follows:
-- `requirements.txt`: packages to install in a virtual environment to run the application
-- `main.py`: The main entry point for our application. It performs fault list generations, FI campaigns where it saves the OFM and the outputs (golden and faulty) and a final FI analysis
-- `SETTINGS.py`: Configuration file to set preferences
-- `utils.py`: Utility functions and helper modules
-- `faultManager/`: Contains the files used to manage the FI campaigns
-- `ofmapManager/`: Saves the OFM of the golden network
-- `dlModels/`: Directory where models and weights are stored
 
-# Setup
+- `requirements.txt`: Packages to install in a virtual environment to run the application.
+- `main.py`: The main entry point for the application. It handles fault list generation, fault injection campaigns (saving clean/faulty outputs and feature maps), and final fault analysis.
+- `SETTINGS.py`: Configuration file to set experiment preferences.
+- `utils.py`: Utility functions and helper modules.
+- `faultManager/`: Code to manage fault injection campaigns.
+- `ofmapManager/`: Tools to save the output feature maps (OFMs) of the clean network.
+- `dlModels/`: Contains model definitions and pretrained weights.
 
-To get started, first clone the repository from GitHub:
+## Setup
 
-`git clone https://github.com/your-username/SFIadvancedmodels.git`
+### Clone the repository
+```bash
+git clone https://github.com/your-username/SFIadvancedmodels.git
+```
 
-## Creating a Python Environment
-It is recommended to create a virtual environment to manage your dependencies. You can do this using venv:
+### Creating a Python Environment
+We recommend creating a virtual environment:
+```bash
+python3 -m venv environment_name
+source environment_name/bin/activate
+```
 
-`python3 -m venv environment_name`
+### Installing Dependencies
+```bash
+pip install -r requirements.txt
+```
 
-`source environment_name/bin/activate`
+## Usage
+To generate the fault list, execute fault injection, or analyze data, configure your experiment in `SETTINGS.py`, then run:
+```bash
+python3 main.py
+```
+To analyze and visualize the summarized results (e.g., failure rate distribution, most critical layers/faults), run:
+```bash
+python3 genGraph.py
+```
 
-## Installing Dependencies
-Once your virtual environment is activated, install the required packages listed in requirements.txt:
 
-`pip install -r requirements.txt`
+## Configuration Parameters
 
-# Usage
-To generate the fault list, to start a fault injection, or to analyze the data, compile the ```SETTINGS.py``` file to configure your experiments, then run:
+### `NUM_FAULTS_TO_INJECT`
+Specifies how many **individual faults (bit flips)** are combined **within a single fault injection group**.
 
-``` python3 main.py ```
+- For example, if `NUM_FAULTS_TO_INJECT = 2`, the system will generate fault groups where **2 bit flips are injected simultaneously**, potentially in different positions of the same or different weights.
+- These combinations are precomputed and stored in the fault list during the `FAULT_LIST_GENERATION` phase.
 
-It is noted that the type of fault injected is permanent and simulates a stuck-at fault in the memory where the model weights are stored
+### `FAULTS_TO_INJECT`
+Defines the **number of fault groups to be injected** during the campaign.
 
+- If `FAULTS_TO_INJECT = -1`, the system performs a **full exhaustive campaign**, injecting **all possible combinations** of faults generated according to `NUM_FAULTS_TO_INJECT`.
+- If `FAULTS_TO_INJECT` is set to a positive integer (e.g., 1000), a **random subset of 1000 fault groups** will be sampled from the fault list.
+
+### Example
+If:
+```python
+NUM_FAULTS_TO_INJECT = 3
+FAULTS_TO_INJECT = 1000
+```
 ## Outputs
-The code is divided into four individually activatable parts that produce different outputs, controlled by boolean variables in the SETTINGS.py file:
+The application is modular, and behavior is controlled by boolean flags in `SETTINGS.py`:
 
-- ```FAULT_LIST_GENERATION```: Generates a fault list for the selected network based on the set parameters.
-- ```FAULTS_INJECTION```: Loads the fault list and executes the fault injection campaign, saving outputs or golden/corrupted OFMs based on the preferences set.
-- ```FI_ANALYSIS```: Analyzes the corrupted outputs against the golden ones and returns the number of masked, non-critical, and critical (SDC-1) fault.
-- ```FI_ANALYSIS_SUMMARY```: When injecting a large number of faults or using large datasets, the previous analysis can produce very large and hard-to-handle CSV files. This variable activates a script that summarizes the previously generated data to make it more accessible.
+- `FAULT_LIST_GENERATION`: Generates the fault list.
+- `FAULTS_INJECTION`: Loads the fault list and performs the fault injection campaign, saving clean/faulty outputs and optionally OFMs.
+- `FI_ANALYSIS`: Compares clean and corrupted outputs, classifies each fault, and logs metrics.
+- `FI_ANALYSIS_SUMMARY`: Generates a summarized CSV file from the fault analysis to improve readability when injecting many faults.
 
-The output of the SFI is stored in the folder `output`. More in details:
+### Output Directories
+- `output/clean_feature_maps/`: Clean feature maps (OFMs).
+- `output/clean_output/`: Clean inference outputs.
+- `output/fault_list/`: The fault lists.
+- `output/faulty_feature_maps/`: Faulty OFMs.
+- `output/faulty_output/`: Faulty inference outputs.
+- `results/`: Full CSV logs of output analyses.
+- `results_summary/`: Summarized fault impact analysis.
 
-- `output/clean_feature_maps`: Stores the clean feature maps
-- `output/clean_ouput`: Stores the clean output
-- `outpput/fault_list`: The fault list used for the injections
-- `output/faulty_feature_maps` : Stores the faulty feature maps
-- `output/faulty_ouput`: Stores the faulty output
-- `results/`: Stores the analysis of the outputs
-- `results_summary/`: Stores the summarized analysis of the outputs
+### Output File Naming Conventions
+- Clean FM: `batch_[batch_id]_layer_[layer_name].npz`
+- Clean output: `clean_output.npy`
+- Faulty FM: `fault_[fault_id]_batch_[batch_id]_layer_[layer_name].npz`
+- Faulty output: `[fault_model]/batch_[batch_id].npy`
 
+### Tensor Shapes
+- Clean OFMs: `B x K x H x W`
+- Clean output: `N x B x C`
+- Faulty OFMs: `B x K x H x W`
+- Faulty output: `F x B x C`
 
-The file are named as follow:
+Where:
+- `F`: Number of faults
+- `N`: Number of batches
+- `B`: Batch size
+- `C`: Number of classes
+- `K`: Channels
+- `H`, `W`: Height and width
 
-- clean FM: ```batch_[batch_id]_layer_[layer_name].npz```. 
-This file contains the clean output feature map of layer `[layer_id]` given the input batch `[batch_id]`.
-- clean output: ```clean_output.npy```.
-This file contains the clean output for all the input batches.
-- faulty FM: ```fault_[fault_id]_batch_[batch_id]_layer_[layer_name].npz```.
-This file contains the faulty output feature map of layer `[layer_id]` given the input batch `[batch_id]` when the fault
-`[fault_id]` is injected.
-- faulty output: ```[fault_model]/batch_[batch_id].npy```.
-This file contains the clean output given the input batch `[batch_id]` for all the faults injected.
+### Loading Arrays
+- OFMs: `np.load(file_name)['arr_0']`
+- Outputs: `np.load(file_name, allow_pickle=True)`
 
-The files are either np or npz array. The dimensions are the following:
+## Fault List Format
+The fault list is a CSV file structured as:
 
-- clean FM: ```BxKxHxW```
-- clean output: ```NxBxC```
-- faulty FM: ```BxKxHxW```
-- clean output: ```FxBxC```
+| Injection | Layer       | TensorIndex      | Bit |
+|-----------|-------------|------------------|-----|
+| 0         | fc1         | (2, 1)           | 3   |
 
-Where `F` is the length of the fault list, `N` is the number of batches, `B` is the batch size, `C` is the number of
-classes, `K` is the number of channels of an OFM, `H` is the height of an OFM and `W` is the width.
+- `Injection`: Unique fault ID.
+- `Layer`: Layer name.
+- `TensorIndex`: Position in the weight tensor.
+- `Bit`: Bit index flipped or stuck.
 
-To load the FM arrays call ```np.load(file_name)['arr_0'])```. To load the output array call ```np.load(file_name, allow_pickle=True)```.
+## Output Analysis
+Files generated by `FI_ANALYSIS` are located in:
+```
+results/<dataset>/<model>/<batch_size>/
+```
+Includes:
+- `output_analysis.csv`: CSV listing fault behavior on each image in each batch.
+- `fault_statistics.txt`: Summary of total masked, non-critical, and critical (SDC-1) faults.
 
-### Fault list
+`output_analysis.csv` example:
 
-The generated fault lists are CSV files with a specific format to which the FI refers in order to inject faults into the neural model. The structure is as follows:
+| Fault_ID | Batch | Image | Output |
+|----------|-------|-------|--------|
+| 0        | 0     | 0     | 1      |
 
+Where:
+- `0`: masked
+- `1`: non-critical
+- `2`, `3`: increasingly critical but same class
+- `4`: SDC-1 (silent data corruption)
 
-FL example for a VGG-11 model with GTSRB dataset
+## Summary File Format
+Generated with `FI_ANALYSIS_SUMMARY`, saved in:
+```
+results_summary/<dataset>/<model>/<batch_size>/model_summary.csv
+```
 
-| Injection |    Layer   |   TensorIndex  | Bit |
-|:---------:|:----------:|:--------------:|:---:|
-|         0 | features.0 | "(3, 0, 2, 1)" |  15 |
-|    ...    |     ...    |       ...      | ... |
+| Injection | Layers  | TensorIndices | Bits | masked | non_critical | critical | accuracy | failure_rate |
+|-----------|---------|----------------|------|--------|---------------|----------|----------|---------------|
 
-- `Injection`: Column indicating the injection number.
-- `Layer`: The layer in which the fault is injected.
-- `TensorIndex`: Coordinate of the weight where the fault is injected.
-- `Bit`: Corrupted bit that is flipped.
+- Summarizes fault impact across all test samples.
+- Useful for ranking the most critical faults.
 
-
-### Analysis
-
-The analysis files obtained with `FI_ANALYSIS` option are contained in the `results/` folder and are organized by dataset, model, and batch size: `results/dataset-name/model-name/batch-size/`. 
-Inside, there are two files:
-
-- `fault_statistics.txt`: A text file where the total number of masked, non-critical, and critical (SDC-1) inferences are saved.
-- `output_analysis.csv`:  A CSV file containing all the information regarding the classification of each fault for every inference.
-
-Faults were classified according to 3 typologies:
-- `masked`: Inference that mask the fault.
-- `non-critical`: Inferences where the fault alters the output but not the prediction.
-- `critical (SDC-1)`: Inference where the fault is classified as SDC-1, meaning it alters the final prediction.
-
-
-
-The `output_analysis.csv` is organized as follows:
-
-| fault | batch | image | output |
-|:-----:|:-----:|:-----:|:------:|
-|     0 |     0 |     0 |      1 |
-|     0 |     0 |     1 |      0 |
-|     0 |     0 |     2 |      0 |
-|     0 |     0 |     3 |      2 |
-|  ...  |  ...  |  ...  |   ...  |
-| 16663 |     9 |  1024 |      1 |
-a
-- `fault`: Unique identifier of the injected fault, corresponding to the `Injection` column in the fault list used.
-- `batch`: Batch containing the dataset images used for inference.
-- `image`: Image in the batch on which the inference was performed.
-- `output`: Classification of the injected fault by comparing the golden outputs with the corrupted ones obtained from the image inference. The returned values are `0` for a masked fault, `1` for a non-critical fault, and `2` for a critical fault (SDC-1).
-
-### Summarized analysis
-
-Due to the verbosity of the `output_analysis.csv` file, if many faults are injected or a large number of images are used for inferences, the readability of the CSV decreases significantly. To address this issue, using the `FI_ANALYSIS_SUMMARY` option, you can generate a new CSV file named `model-name_summary.csv` inside the `results_summary/dataset-name/model-name/batch-size/` folder. This file comprises the original fault list integrated with summarized results for each fault obtained from the previous analysis. The CSV is organized as follows:
-
-| Injection | Layer |   TensorIndex   | Bit | n_injections | masked | non_critical | critical |
-|:---------:|:-----:|:---------------:|:---:|:------------:|:------:|:------------:|:--------:|
-|         0 | conv1 |  "(7, 0, 2, 1)" |  15 |        10000 |  10000 |            0 |        0 |
-|         1 | conv1 | "(14, 0, 2, 0)" |   5 |        10000 |  10000 |            0 |        0 |
-|         2 | conv1 | "(27, 0, 0, 0)" |  13 |        10000 |    701 |         9298 |        1 |
-|         3 | conv1 | "(14, 2, 2, 0)" |  12 |        10000 |   9998 |            2 |        0 |
-|    ...    |  ...  |       ...       | ... |      ...     |   ...  |      ...     |    ...   |
-
-- `Injection`: Column indicating the injection number.
-- `Layer`: The layer in which the fault is injected.
-- `TensorIndex`: Coordinate of the weight where the fault is injected.
-- `Bit`: Corrupted bit that is flipped.
-- `n_injections`:  Number of summarized inferences, representing the entire test dataset executed with the injected fault.
-- `masked`: Number of dataset inferences that identified the fault as masked.
-- `non_critical`: Number of dataset inferences that identified the fault as non-critical.
-- `critical`: Number of dataset inferences that identified the fault as critical (SDC-1).
-
-# Acknowledgments
-
-This study was carried out within the FAIR - Future Artificial Intelligence Research and received funding from the European Union Next-GenerationEU (PIANO NAZIONALE DI RIPRESA E RESILIENZA (PNRR) – MISSIONE 4 COMPONENTE 2, INVESTIMENTO 1.3 – D.D. 1555 11/10/2022, PE00000013). This manuscript reflects only the authors’ views and opinions, neither the European Union nor the European Commission can be considered responsible for them.
+## Acknowledgments
+This work is supported by FAIR - Future Artificial Intelligence Research and funded by the EU Next-GenerationEU initiative (PNRR - Mission 4, Component 2, Investment 1.3, D.D. 1555 11/10/2022, PE00000013). The content reflects only the authors' views; the European Union is not responsible for any use that may be made of the information it contains.

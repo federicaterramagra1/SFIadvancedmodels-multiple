@@ -27,16 +27,13 @@ def main():
         device = get_device(use_cuda0=SETTINGS.USE_CUDA_0, use_cuda1=SETTINGS.USE_CUDA_1)
         print(f'Using device {device}')
 
-        # Loader per test set
-        _, _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
+        _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
 
-        # Costruisci rete e stampa info
         network = get_network(network_name=SETTINGS.NETWORK, device=device, dataset_name=SETTINGS.DATASET)
         print(f"Network structure:\n{network}")
         print_layer_dimensions(network)
 
-        # Train loaders
-        train_loader, val_loader, test_loader = get_loader(
+        train_loader, val_loader = get_loader(
             network_name=SETTINGS.NETWORK,
             batch_size=SETTINGS.BATCH_SIZE,
             dataset_name=SETTINGS.DATASET
@@ -53,7 +50,7 @@ def main():
             model=network,
             train_loader=train_loader,
             val_loader=val_loader,
-            num_epochs=SETTINGS.NUM_EPOCHS if hasattr(SETTINGS, 'NUM_EPOCHS') else 30,
+            num_epochs=SETTINGS.NUM_EPOCHS if hasattr(SETTINGS, 'NUM_EPOCHS') else 15,
             lr=0.001,
             device=device,
             save_path=model_save_path
@@ -72,8 +69,7 @@ def main():
             clean_inference(network, loader, device, SETTINGS.NETWORK)
             return
 
-        # RICREA IL LOADER dopo il training e quantizzazione
-        _, _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
+        _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
 
         print("Clean inference accuracy test:")
         clean_inference(network, loader, device, SETTINGS.NETWORK)
@@ -96,6 +92,27 @@ def main():
 
         clean_ofm_manager.load_clean_output(force_reload=True)
 
+        # BLOCCO: fault injection partizionata
+        current_part = SETTINGS.PART_ID
+        part_fault_list_name = f"{SETTINGS.NETWORK}_{SETTINGS.SEED}_fault_list_part_{current_part}.csv"
+        SETTINGS.FAULT_LIST_NAME = part_fault_list_name
+
+        output_csv_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, f"output_analysis_part_{current_part}.csv")
+        # 🔧 Crea la cartella se non esiste
+        os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
+        if os.path.exists(output_csv_path):
+            with open(output_csv_path, 'r') as f:
+                lines = f.readlines()
+                if len(lines) > 1:
+                    print(f" Parte {current_part} già completata, salto.")
+                    return
+                else:
+                    print(f"File {output_csv_path} vuoto o incompleto. Rigenero.")
+                    os.remove(output_csv_path)
+
+
+        print(f"\n Avvio iniezione per blocco PART_ID={current_part}/{SETTINGS.NUM_PARTS - 1}")
+
         fault_list_generator = FLManager(
             network=network,
             network_name=SETTINGS.NETWORK,
@@ -107,12 +124,6 @@ def main():
             fault_model=SETTINGS.FAULT_MODEL,
             fault_list_generator=fault_list_generator
         )
-
-        if SETTINGS.FAULTS_TO_INJECT is not None and 0 < SETTINGS.FAULTS_TO_INJECT < len(fault_list):
-            fault_list = random.sample(fault_list, SETTINGS.FAULTS_TO_INJECT)
-            print(f" Fault list limitata a {SETTINGS.FAULTS_TO_INJECT} fault.")
-        else:
-            print(f" Fault list ESAUSTIVA: {len(fault_list)} fault groups (ognuno da {SETTINGS.NUM_FAULTS_TO_INJECT} bit).")
 
         fault_injection_executor = FaultInjectionManager(
             network=network,
@@ -128,22 +139,17 @@ def main():
             fault_model=SETTINGS.FAULT_MODEL,
             fault_list=fault_list,
             first_batch_only=False,
-            save_output=True
+            save_output=True,
+            part_id=current_part  # salvataggio batch_{i}_part_{current_part}.npy
         )
 
+        # OUTPUT ANALYSIS
+        output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE, part_id=current_part)
+        print(f" Analisi PART_ID={current_part} salvata in {output_csv_path}")
 
-    if SETTINGS.FI_ANALYSIS:
-        try:
-            output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
-            print('Done')
-        except:
-            print('No loader found to save the labels, creating a new one')
-            _, _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
-            output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
-            print('Done')
-
+    # ANALISI FINALE
     if SETTINGS.FI_ANALYSIS_SUMMARY:
-        print('Generating CSV summary')
+        print('Generating CSV summary...')
         csv_summary()
         print('CSV summary generated')
 

@@ -132,4 +132,3 @@ class FaultInjectionManager:
         output_file_path = f"{batch_folder}/batch_{batch_id}.npy"
         np.save(output_file_path, faulty_output_data)
         print(f"Saved faulty output to {output_file_path}")
-

@@ -154,7 +154,7 @@ def train_model(model, train_loader, val_loader=None, num_epochs=50, lr=0.001, d
                     correct_val += (predicted == labels).sum().item()
                     total_val += labels.size(0)
             val_acc = 100 * correct_val / total_val
-            print(f"🔎 Validation Accuracy: {val_acc:.2f}%")
+            print(f" Validation Accuracy: {val_acc:.2f}%")
 
             # Salva il miglior modello
             if save_path and val_acc > best_val_acc:
@@ -230,8 +230,9 @@ def get_loader(network_name: str,
     if dataset_name == 'Banknote':
         from utils import load_banknote_dataset
         print('Loading Banknote dataset...')
-        train_loader, test_loader, _ = load_banknote_dataset(batch_size=batch_size)
-        return train_loader, test_loader
+        train_loader, val_loader, test_loader = load_banknote_dataset(batch_size=batch_size)
+        return train_loader, val_loader, test_loader
+
         
     if network_name == 'SimpleMLP':
         # Load Breast Cancer dataset with the correct parameters
@@ -689,24 +690,29 @@ def load_banknote_dataset(batch_size=32):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Train su 348, test sul resto (1372 - 348 = 1024)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, train_size=348, random_state=42, stratify=y
+    # Split iniziale: 70% train, 30% test
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
+        X_scaled, y, train_size=0.7, random_state=42, stratify=y
     )
 
-    # Conversione in tensori PyTorch
-    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
-    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-    y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+    # Split interno: 90% train, 10% val
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_trainval, y_trainval, test_size=0.1, random_state=42, stratify=y_trainval
+    )
 
-    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    # Conversione in tensori
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val = torch.tensor(y_val, dtype=torch.long)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.long)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, drop_last=True)
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
 
-    return train_loader, test_loader, (X_test_tensor, y_test_tensor)
+    return train_loader, val_loader, test_loader
 
 
 def load_from_dict(network, device, path, function=None):
@@ -797,90 +803,64 @@ import SETTINGS
 from tqdm import tqdm
 
 def output_definition(test_loader, batch_size):
-    import os, csv
-    import numpy as np
-    from tqdm import tqdm
-    from utils import count_batch
-
     clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
     if not os.path.exists(clean_output_path):
         print(f" ERROR: Clean output file {clean_output_path} is missing!")
         return
 
-    print("🔍 Caricamento output clean...")
+    print(" Caricamento output clean...")
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
     number_of_clean_batches = len(loaded_clean_output)
 
     batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
     batch_path = os.path.join(batch_folder, 'batch_0.npy')
     number_of_batch, n_outputs, max_faults = count_batch(batch_folder, batch_path)
-
     number_of_batch = min(number_of_batch, number_of_clean_batches)
-    print(f"✅ Clean output shape: {loaded_clean_output.shape} (using {number_of_batch} batches)")
 
+    print(f" Clean output shape: {loaded_clean_output.shape} (using {number_of_batch} batches)")
     n_faults = max_faults if SETTINGS.FAULTS_TO_INJECT == -1 else SETTINGS.FAULTS_TO_INJECT
-    dim3 = batch_size
-
-    faulty_tensor_data = np.zeros((n_faults, number_of_batch, dim3, n_outputs), dtype=np.float32)
-
-    print("🔄 Caricamento output faultati...")
-    for i in range(number_of_batch):
-        path = os.path.join(batch_folder, f'batch_{i}.npy')
-        if not os.path.exists(path):
-            print(f"⚠️ File mancante: {path}")
-            continue
-
-        faulty = np.load(path, allow_pickle=True)
-        actual_faults = min(n_faults, faulty.shape[0])
-        actual_samples = min(dim3, faulty.shape[1])
-        faulty_tensor_data[:actual_faults, i, :actual_samples, :] = faulty[:actual_faults, :actual_samples, :]
-
-    print(f"✅ Shape finale tensor faultati: {faulty_tensor_data.shape}")
 
     output_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
-
-    masked = 0
-    not_critical = 0
-    critical = 0
 
     with open(output_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
 
-        for z in tqdm(range(n_faults), desc="Analysis"):
+        for fault_id in tqdm(range(n_faults), desc="Analysis", colour='cyan'):
             for i in range(number_of_batch):
-                clean_batch = loaded_clean_output[i]
-                for j in range(min(len(clean_batch), dim3)):
-                    clean = clean_batch[j]
-                    faulty = faulty_tensor_data[z, i, j]
-                    clean_top = np.argmax(clean)
-                    faulty_top = np.argmax(faulty)
-                    delta = abs(faulty[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
+                path = os.path.join(batch_folder, f'batch_{i}.npy')
+                if not os.path.exists(path):
+                    print(f" File mancante: {path}")
+                    continue
 
-                    if np.array_equal(clean, faulty):
-                        writer.writerow([z, i, j, '0'])
-                        masked += 1
+                faulty = np.load(path, allow_pickle=True)
+                if fault_id >= faulty.shape[0]:
+                    continue
+
+                clean_batch = loaded_clean_output[i]
+                for j in range(min(len(clean_batch), batch_size)):
+                    clean = clean_batch[j]
+                    faulty_out = faulty[fault_id, j]
+                    clean_top = np.argmax(clean)
+                    faulty_top = np.argmax(faulty_out)
+                    delta = abs(faulty_out[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
+
+                    if np.array_equal(clean, faulty_out):
+                        writer.writerow([fault_id, i, j, '0'])
                     elif clean_top == faulty_top:
                         if delta >= 0.2:
-                            writer.writerow([z, i, j, '3'])
+                            writer.writerow([fault_id, i, j, '3'])
                         elif delta >= 0.1:
-                            writer.writerow([z, i, j, '2'])
+                            writer.writerow([fault_id, i, j, '2'])
                         else:
-                            writer.writerow([z, i, j, '1'])
-                        not_critical += 1
+                            writer.writerow([fault_id, i, j, '1'])
                     else:
-                        writer.writerow([z, i, j, '4'])
-                        critical += 1
+                        writer.writerow([fault_id, i, j, '4'])
 
-    total = masked + not_critical + critical
+    print("\nOutput analysis completata e salvata in CSV.")
 
-    print(f"\n📊 Output Definition Summary")
-    print(f"Total: {total}")
-    print(f"Masked: {masked} ({masked / total:.2%})")
-    print(f"Non-Critical: {not_critical} ({not_critical / total:.2%})")
-    print(f"Critical (SDC-1): {critical} ({critical / total:.2%})")
-    
+
 def csv_summary():
     import pandas as pd
     import os
