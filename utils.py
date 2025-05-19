@@ -837,101 +837,106 @@ def output_definition(test_loader, batch_size):
                     print(f"  Shape mismatch batch {i} in fault {fault_id}")
                     continue
 
+                current_batch_size = clean_batch.shape[0]
+
                 clean_top = np.argmax(clean_batch, axis=1)
                 faulty_top = np.argmax(faulty, axis=1)
                 same_label = (clean_top == faulty_top)
 
-                clean_conf = clean_batch[np.arange(batch_size), clean_top]
-                faulty_conf = faulty[np.arange(batch_size), clean_top]
+                clean_conf = clean_batch[np.arange(current_batch_size), clean_top]
+                faulty_conf = faulty[np.arange(current_batch_size), clean_top]
                 delta = np.abs(faulty_conf - clean_conf) / np.maximum(1e-8, np.abs(clean_conf))
 
                 masked = np.all(clean_batch == faulty, axis=1)
 
                 # default = 4 (SDC-1)
-                outputs = np.full(batch_size, 4)
+                outputs = np.full(current_batch_size, 4)
                 outputs[masked] = 0
                 outputs[same_label & (delta < 0.1)] = 1
                 outputs[same_label & (delta >= 0.1) & (delta < 0.2)] = 2
                 outputs[same_label & (delta >= 0.2)] = 3
 
-                for j in range(batch_size):
+                for j in range(current_batch_size):
                     writer.writerow([fault_id, i, j, str(outputs[j])])
 
-    print("\n Output analysis completata.")
+
+    print("\nOutput analysis completata.")
 
 
+import pandas as pd
+import os
+from tqdm import tqdm
+from multiprocessing import Pool, cpu_count, Manager
+
+# Variabili globali condivise
+df_outputs = None
+fault_df = None
+
+def init_worker(shared_outputs, shared_faults):
+    global df_outputs, fault_df
+    df_outputs = shared_outputs
+    fault_df = shared_faults
+
+def process_injection(inj_id):
+    group = fault_df[fault_df['Injection'] == inj_id]
+    fault_outputs = df_outputs[df_outputs['Fault_ID'] == inj_id]['output']
+
+    masked = (fault_outputs == 0).sum()
+    non_critical = fault_outputs.isin([1, 2, 3]).sum()
+    critical = (fault_outputs == 4).sum()
+
+    layers = group['Layer'].tolist()
+    indices = group['TensorIndex'].tolist()
+    bits = group['Bit'].tolist()
+
+    total = masked + non_critical + critical
+    accuracy = (masked + non_critical) / total if total > 0 else 0.0
+    failure_rate = critical / total if total > 0 else 0.0
+
+    return {
+        'Injection': inj_id,
+        'Layers': str(layers),
+        'TensorIndices': str(indices),
+        'Bits': str(bits),
+        'masked': masked,
+        'non_critical': non_critical,
+        'critical': critical,
+        'accuracy': round(accuracy, 4),
+        'failure_rate': round(failure_rate, 4)
+    }
 
 def csv_summary():
-    import pandas as pd
-    import os
-    from tqdm import tqdm
+    FI_ANALYSIS_PATH = SETTINGS.FI_ANALYSIS_PATH
+    FAULT_LIST_PATH = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
+    OUTPUT_FILE_PATH = SETTINGS.FI_SUM_ANALYSIS_PATH
 
-    network_name = SETTINGS.NETWORK_NAME
+    print(f"FI_ANALYSIS_PATH: {FI_ANALYSIS_PATH}")
+    print(f"Fault list path: {FAULT_LIST_PATH}")
+    print(f"Summary output path: {OUTPUT_FILE_PATH}")
 
-    input_file_path1 = f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv'
-    fault_list_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
-    output_file_path = f'{SETTINGS.FI_SUM_ANALYSIS_PATH}'
+    os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
 
-    print(f"FI_ANALYSIS_PATH: {SETTINGS.FI_ANALYSIS_PATH}")
-    print(f"Fault list path: {SETTINGS.FAULT_LIST_PATH}")
-    print(f"Summary output path: {SETTINGS.FI_SUM_ANALYSIS_PATH}")
+    df_out = pd.read_csv(f'{FI_ANALYSIS_PATH}/output_analysis.csv')
+    print(' Output analysis loaded.')
+    df_fault = pd.read_csv(FAULT_LIST_PATH)
+    print(' Fault list loaded.')
 
-    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+    injection_ids = df_fault['Injection'].unique()
 
-    try:
-        df = pd.read_csv(input_file_path1)
-        print('Output analysis loaded.')
-    except FileNotFoundError:
-        print(f"File not found: {input_file_path1}")
-        return
+    print(f" Starting multiprocessing with {cpu_count()} cores...")
 
-    try:
-        fault_df = pd.read_csv(fault_list_path)
-        print('Fault list loaded.')
-    except FileNotFoundError:
-        print(f"File not found: {fault_list_path}")
-        return
+    with Pool(processes=cpu_count(), initializer=init_worker, initargs=(df_out, df_fault)) as pool:
+        results = list(tqdm(pool.imap(process_injection, injection_ids), total=len(injection_ids), desc="Calculating summary"))
 
-    grouped = fault_df.groupby("Injection")
-    output_rows = []
+    summary_df = pd.DataFrame(results)
+    summary_df.to_csv(OUTPUT_FILE_PATH, index=False)
+    print(f" Summary CSV saved to {OUTPUT_FILE_PATH}")
 
-    for inj_id, group in tqdm(grouped, total=len(grouped), desc="Calculating summary"):
-        fault_outputs = df[df['Fault_ID'] == inj_id]['output']
 
-        masked = (fault_outputs == 0).sum()
-        non_critical = fault_outputs.isin([1, 2, 3]).sum()
-        critical = (fault_outputs == 4).sum()
-
-        layers = group['Layer'].tolist()
-        indices = group['TensorIndex'].tolist()
-        bits = group['Bit'].tolist()
-
-        total = masked + non_critical + critical
-        accuracy = (masked + non_critical) / total if total > 0 else 0.0
-        failure_rate = critical / total if total > 0 else 0.0
-
-        output_rows.append({
-            'Injection': inj_id,
-            'Layers': str(layers),
-            'TensorIndices': str(indices),
-            'Bits': str(bits),
-            'masked': masked,
-            'non_critical': non_critical,
-            'critical': critical,
-            'accuracy': round(accuracy, 4),
-            'failure_rate': round(failure_rate, 4)
-        })
-
-    summary_df = pd.DataFrame(output_rows)
-    summary_df.to_csv(output_file_path, index=False)
-    print(f"Summary CSV saved to {output_file_path}")
 
 import numpy as np
 import random
-import torch
-import csv
-import os
-import SETTINGS
+
 
 import itertools
 import csv

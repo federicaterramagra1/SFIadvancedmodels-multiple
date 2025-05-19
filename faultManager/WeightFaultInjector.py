@@ -56,7 +56,7 @@ class WeightFaultInjector:
 
                 int_value = max(-128, min(127, int_value))
 
-                print(f" BEFORE injection: {weight[tensor_index].dequantize().item()}")
+                #print(f" BEFORE injection: {weight[tensor_index].dequantize().item()}")
 
                 new_q_val = torch.tensor([int_value], dtype=torch.int8)
                 new_val = torch._make_per_tensor_quantized_tensor(
@@ -68,7 +68,7 @@ class WeightFaultInjector:
                 q_weight = torch.quantize_per_tensor(new_weight, scale, zero_point, torch.qint8)
                 layer.set_weight_bias(q_weight, bias)
 
-                print(f" AFTER injection: {layer._packed_params._weight_bias()[0][tensor_index].dequantize().item()}")
+                #print(f" AFTER injection: {layer._packed_params._weight_bias()[0][tensor_index].dequantize().item()}")
 
         except Exception as e:
             print(f"ERROR modifying {layer_name}, index {tensor_index}: {e}")
@@ -94,5 +94,5 @@ class WeightFaultInjector:
             except Exception as e:
                 print(f"ERROR restoring {layer_name}, index {tensor_index}: {e}")
 
-        print(f" Restored {len(self.golden_values)} weights.")
+        #print(f" Restored {len(self.golden_values)} weights.")
         self.golden_values.clear()

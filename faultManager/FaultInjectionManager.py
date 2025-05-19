@@ -60,23 +60,26 @@ class FaultInjectionManager:
         print(f" Fault injection con {len(fault_list)} gruppi")
 
         with torch.no_grad():
-            for fault_id, fault_group in enumerate(tqdm(fault_list, desc="Fault Groups")):
-                self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
+            for batch_id, batch in enumerate(self.loader):
+                data, _ = batch
+                data = data.to(self.device)
+                    
+                    
+                for fault_id, fault_group in enumerate(tqdm(fault_list, desc="Fault Groups")):
+                   self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
 
-                for batch_id, batch in enumerate(self.loader):
-                    data, _ = batch
-                    data = data.to(self.device)
+                
 
-                    faulty_scores, _, _ = self.__run_inference_on_batch(batch_id, data)
-                    self.weight_fault_injector.restore_golden()
+                   faulty_scores, _, _ = self.__run_inference_on_batch(batch_id, data)
+                   self.weight_fault_injector.restore_golden()
 
-                    if save_output:
+                   if save_output:
                         output_folder = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/fault_{fault_id}"
                         os.makedirs(output_folder, exist_ok=True)
                         output_path = f"{output_folder}/batch_{batch_id}.npy"
                         np.save(output_path, faulty_scores.cpu().numpy())
 
-                    if first_batch_only:
+                   if first_batch_only:
                         break
 
 
