@@ -795,14 +795,12 @@ import shutil
 import SETTINGS
 from tqdm import tqdm
 
-import os
-import numpy as np
-import pandas as pd
-import shutil
-import SETTINGS
-from tqdm import tqdm
-
 def output_definition(test_loader, batch_size):
+    import os
+    import numpy as np
+    import csv
+    from tqdm import tqdm
+
     clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
     if not os.path.exists(clean_output_path):
         print(f" ERROR: Clean output file {clean_output_path} is missing!")
@@ -812,13 +810,11 @@ def output_definition(test_loader, batch_size):
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
     number_of_clean_batches = len(loaded_clean_output)
 
-    batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
-    batch_path = os.path.join(batch_folder, 'batch_0.npy')
-    number_of_batch, n_outputs, max_faults = count_batch(batch_folder, batch_path)
-    number_of_batch = min(number_of_batch, number_of_clean_batches)
-
-    print(f" Clean output shape: {loaded_clean_output.shape} (using {number_of_batch} batches)")
-    n_faults = max_faults if SETTINGS.FAULTS_TO_INJECT == -1 else SETTINGS.FAULTS_TO_INJECT
+    # Trova tutte le cartelle fault_X
+    faults_root = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
+    fault_dirs = sorted([d for d in os.listdir(faults_root) if d.startswith("fault_")])
+    n_faults = len(fault_dirs)
+    number_of_batch = min(SETTINGS.BATCH_END + 1, number_of_clean_batches)
 
     output_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
@@ -827,38 +823,42 @@ def output_definition(test_loader, batch_size):
         writer = csv.writer(f)
         writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
 
-        for fault_id in tqdm(range(n_faults), desc="Analysis", colour='cyan'):
+        for fault_id, fault_dir in enumerate(tqdm(fault_dirs, desc="Analysis", colour='cyan')):
             for i in range(number_of_batch):
-                path = os.path.join(batch_folder, f'batch_{i}.npy')
+                path = os.path.join(faults_root, fault_dir, f'batch_{i}.npy')
                 if not os.path.exists(path):
                     print(f" File mancante: {path}")
                     continue
 
                 faulty = np.load(path, allow_pickle=True)
-                if fault_id >= faulty.shape[0]:
+                clean_batch = loaded_clean_output[i]
+
+                if faulty.shape != clean_batch.shape:
+                    print(f"  Shape mismatch batch {i} in fault {fault_id}")
                     continue
 
-                clean_batch = loaded_clean_output[i]
-                for j in range(min(len(clean_batch), batch_size)):
-                    clean = clean_batch[j]
-                    faulty_out = faulty[fault_id, j]
-                    clean_top = np.argmax(clean)
-                    faulty_top = np.argmax(faulty_out)
-                    delta = abs(faulty_out[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
+                clean_top = np.argmax(clean_batch, axis=1)
+                faulty_top = np.argmax(faulty, axis=1)
+                same_label = (clean_top == faulty_top)
 
-                    if np.array_equal(clean, faulty_out):
-                        writer.writerow([fault_id, i, j, '0'])
-                    elif clean_top == faulty_top:
-                        if delta >= 0.2:
-                            writer.writerow([fault_id, i, j, '3'])
-                        elif delta >= 0.1:
-                            writer.writerow([fault_id, i, j, '2'])
-                        else:
-                            writer.writerow([fault_id, i, j, '1'])
-                    else:
-                        writer.writerow([fault_id, i, j, '4'])
+                clean_conf = clean_batch[np.arange(batch_size), clean_top]
+                faulty_conf = faulty[np.arange(batch_size), clean_top]
+                delta = np.abs(faulty_conf - clean_conf) / np.maximum(1e-8, np.abs(clean_conf))
 
-    print("\nOutput analysis completata e salvata in CSV.")
+                masked = np.all(clean_batch == faulty, axis=1)
+
+                # default = 4 (SDC-1)
+                outputs = np.full(batch_size, 4)
+                outputs[masked] = 0
+                outputs[same_label & (delta < 0.1)] = 1
+                outputs[same_label & (delta >= 0.1) & (delta < 0.2)] = 2
+                outputs[same_label & (delta >= 0.2)] = 3
+
+                for j in range(batch_size):
+                    writer.writerow([fault_id, i, j, str(outputs[j])])
+
+    print("\n Output analysis completata.")
+
 
 
 def csv_summary():

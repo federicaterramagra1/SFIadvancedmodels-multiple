@@ -52,36 +52,33 @@ class FaultInjectionManager:
         self.weight_fault_injector = WeightFaultInjector(self.network)
         self.injectable_modules = injectable_modules
 
+
     def run_faulty_campaign_on_weight(self, fault_model: str, fault_list: list, first_batch_only: bool = False, save_output: bool = True):
         """
-        Esegue la fault injection a batch, applicando per ogni gruppo le iniezioni in sequenza.
+        Esegue la fault injection a livello di peso. Salva un file per ogni fault, batch per batch.
         """
-        print(f"DEBUG: Running fault injection campaign with {len(fault_list)} fault groups")
-        
+        print(f" Fault injection con {len(fault_list)} gruppi")
+
         with torch.no_grad():
-            for batch_id, batch in enumerate(self.loader):
-                data, _ = batch
-                data = data.to(self.device)
-                faulty_outputs_batch = []
-                pbar = tqdm(fault_list, colour='green', desc=f'FI on batch {batch_id}')
-                
-                for fault_group in tqdm(fault_list, desc=f'FI on batch {batch_id}'):
-                    print(f"DEBUG: Processing fault group for {fault_group[0].layer_name}, index {fault_group[0].tensor_index}")
-                    # applica tutte le iniezioni cumulative
-                    self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
-                    # inferenza UNA SOLA volta
+            for fault_id, fault_group in enumerate(tqdm(fault_list, desc="Fault Groups")):
+                self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
+
+                for batch_id, batch in enumerate(self.loader):
+                    data, _ = batch
+                    data = data.to(self.device)
+
                     faulty_scores, _, _ = self.__run_inference_on_batch(batch_id, data)
-                    faulty_outputs_batch.append(faulty_scores.cpu().numpy())
-                    # restore golden dopo il gruppo
                     self.weight_fault_injector.restore_golden()
 
-                
-                if save_output:
-                    faulty_outputs_batch = np.array(faulty_outputs_batch) 
-                    self.save_faulty_outputs(faulty_outputs_batch, batch_id)
-                
-                if first_batch_only:
-                    break
+                    if save_output:
+                        output_folder = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/fault_{fault_id}"
+                        os.makedirs(output_folder, exist_ok=True)
+                        output_path = f"{output_folder}/batch_{batch_id}.npy"
+                        np.save(output_path, faulty_scores.cpu().numpy())
+
+                    if first_batch_only:
+                        break
+
 
 
 
