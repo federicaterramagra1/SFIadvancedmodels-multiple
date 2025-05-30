@@ -794,13 +794,7 @@ import pandas as pd
 import shutil
 import SETTINGS
 from tqdm import tqdm
-
 def output_definition(test_loader, batch_size):
-    import os
-    import numpy as np
-    import csv
-    from tqdm import tqdm
-
     clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
     if not os.path.exists(clean_output_path):
         print(f" ERROR: Clean output file {clean_output_path} is missing!")
@@ -810,11 +804,11 @@ def output_definition(test_loader, batch_size):
     loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
     number_of_clean_batches = len(loaded_clean_output)
 
-    # Trova tutte le cartelle fault_X
-    faults_root = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
-    fault_dirs = sorted([d for d in os.listdir(faults_root) if d.startswith("fault_")])
-    n_faults = len(fault_dirs)
-    number_of_batch = min(SETTINGS.BATCH_END + 1, number_of_clean_batches)
+    batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
+    batch_path = os.path.join(batch_folder, 'batch_0.npy')
+    number_of_batch, _, max_faults = count_batch(batch_folder, batch_path)
+    number_of_batch = min(number_of_batch, number_of_clean_batches)
+    n_faults = max_faults if SETTINGS.FAULTS_TO_INJECT == -1 else SETTINGS.FAULTS_TO_INJECT
 
     output_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
@@ -823,33 +817,29 @@ def output_definition(test_loader, batch_size):
         writer = csv.writer(f)
         writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
 
-        for fault_id, fault_dir in enumerate(tqdm(fault_dirs, desc="Analysis", colour='cyan')):
+        for fault_id in tqdm(range(n_faults), desc="Analysis", colour='cyan'):
             for i in range(number_of_batch):
-                path = os.path.join(faults_root, fault_dir, f'batch_{i}.npy')
+                path = os.path.join(batch_folder, f'batch_{i}.npy')
                 if not os.path.exists(path):
-                    print(f" File mancante: {path}")
                     continue
 
                 faulty = np.load(path, allow_pickle=True)
-                clean_batch = loaded_clean_output[i]
-
-                if faulty.shape != clean_batch.shape:
-                    print(f"  Shape mismatch batch {i} in fault {fault_id}")
+                if fault_id >= faulty.shape[0]:
                     continue
 
-                current_batch_size = clean_batch.shape[0]
+                clean_batch = loaded_clean_output[i]
+                current_batch_size = min(len(clean_batch), batch_size)
 
                 clean_top = np.argmax(clean_batch, axis=1)
-                faulty_top = np.argmax(faulty, axis=1)
+                faulty_top = np.argmax(faulty[fault_id], axis=1)
                 same_label = (clean_top == faulty_top)
 
                 clean_conf = clean_batch[np.arange(current_batch_size), clean_top]
-                faulty_conf = faulty[np.arange(current_batch_size), clean_top]
+                faulty_conf = faulty[fault_id][np.arange(current_batch_size), clean_top]
                 delta = np.abs(faulty_conf - clean_conf) / np.maximum(1e-8, np.abs(clean_conf))
 
-                masked = np.all(clean_batch == faulty, axis=1)
+                masked = np.all(clean_batch == faulty[fault_id], axis=1)
 
-                # default = 4 (SDC-1)
                 outputs = np.full(current_batch_size, 4)
                 outputs[masked] = 0
                 outputs[same_label & (delta < 0.1)] = 1
@@ -859,52 +849,199 @@ def output_definition(test_loader, batch_size):
                 for j in range(current_batch_size):
                     writer.writerow([fault_id, i, j, str(outputs[j])])
 
-
     print("\nOutput analysis completata.")
 
+from concurrent.futures import ProcessPoolExecutor
 
-import pandas as pd
-import os
-from tqdm import tqdm
-from multiprocessing import Pool, cpu_count, Manager
 
-# Variabili globali condivise
-df_outputs = None
-fault_df = None
+def _analyze_fault_range(start_id, end_id, batch_folder, clean_output_path, batch_size, n_batches):
+    results = []
 
-def init_worker(shared_outputs, shared_faults):
-    global df_outputs, fault_df
-    df_outputs = shared_outputs
-    fault_df = shared_faults
+    clean_output = np.load(clean_output_path, allow_pickle=True)
 
-def process_injection(inj_id):
-    group = fault_df[fault_df['Injection'] == inj_id]
-    fault_outputs = df_outputs[df_outputs['Fault_ID'] == inj_id]['output']
+    for fault_id in range(start_id, end_id):
+        for i in range(n_batches):
+            path = os.path.join(batch_folder, f'batch_{i}.npy')
+            if not os.path.exists(path):
+                continue
 
-    masked = (fault_outputs == 0).sum()
-    non_critical = fault_outputs.isin([1, 2, 3]).sum()
-    critical = (fault_outputs == 4).sum()
+            faulty = np.load(path, allow_pickle=True)
+            if fault_id >= faulty.shape[0]:
+                continue
 
-    layers = group['Layer'].tolist()
-    indices = group['TensorIndex'].tolist()
-    bits = group['Bit'].tolist()
+            clean_batch = clean_output[i]
+            for j in range(min(len(clean_batch), batch_size)):
+                clean = clean_batch[j]
+                faulty_out = faulty[fault_id, j]
+                clean_top = np.argmax(clean)
+                faulty_top = np.argmax(faulty_out)
+                delta = abs(faulty_out[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
 
-    total = masked + non_critical + critical
-    accuracy = (masked + non_critical) / total if total > 0 else 0.0
-    failure_rate = critical / total if total > 0 else 0.0
+                if np.array_equal(clean, faulty_out):
+                    results.append([fault_id, i, j, '0'])
+                elif clean_top == faulty_top:
+                    if delta >= 0.2:
+                        results.append([fault_id, i, j, '3'])
+                    elif delta >= 0.1:
+                        results.append([fault_id, i, j, '2'])
+                    else:
+                        results.append([fault_id, i, j, '1'])
+                else:
+                    results.append([fault_id, i, j, '4'])
+    return results
 
-    return {
-        'Injection': inj_id,
-        'Layers': str(layers),
-        'TensorIndices': str(indices),
-        'Bits': str(bits),
-        'masked': masked,
-        'non_critical': non_critical,
-        'critical': critical,
-        'accuracy': round(accuracy, 4),
-        'failure_rate': round(failure_rate, 4)
-    }
+def _analyze_fault_range_star(args):
+    return _analyze_fault_range(*args)
 
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+def output_definition_parallel(test_loader, batch_size, n_workers=32):
+    import math
+
+    clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
+    if not os.path.exists(clean_output_path):
+        print(f" ERROR: Clean output file {clean_output_path} is missing!")
+        return
+
+    batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
+    batch_path = os.path.join(batch_folder, 'batch_0.npy')
+    number_of_batch, _, max_faults = count_batch(batch_folder, batch_path)
+
+    loaded_clean_output = np.load(clean_output_path, allow_pickle=True)
+    number_of_batch = min(number_of_batch, len(loaded_clean_output))
+    n_faults = max_faults if SETTINGS.FAULTS_TO_INJECT == -1 else SETTINGS.FAULTS_TO_INJECT
+
+    print(f" Parallel analysis with {n_workers} workers on {n_faults} faults × {number_of_batch} batches")
+
+    os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
+    output_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
+
+    chunk_size = math.ceil(n_faults / n_workers)
+    chunks = [(i, min(i + chunk_size, n_faults)) for i in range(0, n_faults, chunk_size)]
+    args = [(start, end, batch_folder, clean_output_path, batch_size, number_of_batch) for (start, end) in chunks]
+
+    all_results = []
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = [executor.submit(_analyze_fault_range_star, arg) for arg in args]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Parallel Fault Analysis"):
+            all_results.extend(future.result())
+
+    print(f" Saving analysis to {output_path}...")
+    with open(output_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
+        writer.writerows(all_results)
+
+    print(" Output analysis completata e salvata.")
+
+
+
+def _init_clean_output(path):
+    global CLEAN_OUTPUT
+    CLEAN_OUTPUT = np.load(path, allow_pickle=True)
+
+def _analyze_fault_range_chunk(chunk_id, fault_ids, batch_folder, batch_size, n_batches, output_dir):
+    global CLEAN_OUTPUT
+    results = []
+
+    print(f"[Chunk {chunk_id}] Analisi fault IDs: {fault_ids[:5]}...")  # per conferma
+
+    for fault_id in fault_ids:
+        for i in range(n_batches):
+            path = os.path.join(batch_folder, f'batch_{i}.npy')
+            if not os.path.exists(path):
+                continue
+
+            faulty = np.load(path, allow_pickle=True, mmap_mode='r')
+            if fault_id >= faulty.shape[0]:
+                continue
+
+            clean_batch = CLEAN_OUTPUT[i]
+            for j in range(min(len(clean_batch), batch_size)):
+                clean = clean_batch[j]
+                faulty_out = faulty[fault_id, j]
+                clean_top = np.argmax(clean)
+                faulty_top = np.argmax(faulty_out)
+                delta = abs(faulty_out[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
+
+                if np.array_equal(clean, faulty_out):
+                    results.append([fault_id, i, j, '0'])
+                elif clean_top == faulty_top:
+                    if delta >= 0.2:
+                        results.append([fault_id, i, j, '3'])
+                    elif delta >= 0.1:
+                        results.append([fault_id, i, j, '2'])
+                    else:
+                        results.append([fault_id, i, j, '1'])
+                else:
+                    results.append([fault_id, i, j, '4'])
+    
+
+    chunk_file = os.path.join(output_dir, f"output_analysis_part_{chunk_id}.csv")
+    with open(chunk_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
+        writer.writerows(results)
+
+    print(f"[Chunk {chunk_id}] Completato. Salvato in {chunk_file}")
+
+
+    return chunk_file
+
+def _analyze_fault_range_chunk_star(args):
+    return _analyze_fault_range_chunk(*args)
+
+def output_definition_parallel_chunked(test_loader, batch_size, n_workers=32, chunk_size=5000):
+    from utils import count_batch
+
+    clean_output_path = os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy')
+    if not os.path.exists(clean_output_path):
+        print(f" Clean output not found: {clean_output_path}")
+        return
+
+    print(f"Loaded CLEAN_OUTPUT with shape: {np.load(clean_output_path, allow_pickle=True).shape}")
+
+    batch_folder = os.path.join(SETTINGS.FAULTY_OUTPUT_FOLDER, SETTINGS.FAULT_MODEL)
+    batch_path = os.path.join(batch_folder, 'batch_0.npy')
+    number_of_batch, _, max_faults = count_batch(batch_folder, batch_path)
+
+    n_faults = max_faults if SETTINGS.FAULTS_TO_INJECT == -1 else SETTINGS.FAULTS_TO_INJECT
+    output_dir = SETTINGS.FI_ANALYSIS_PATH
+    os.makedirs(output_dir, exist_ok=True)
+
+    fault_ids = list(range(n_faults))
+    chunks = [fault_ids[i:i + chunk_size] for i in range(0, n_faults, chunk_size)]
+
+    args = []
+    for chunk_id, fault_chunk in enumerate(chunks):
+        chunk_file = os.path.join(output_dir, f"output_analysis_part_{chunk_id}.csv")
+        if os.path.exists(chunk_file):
+            print(f" Chunk {chunk_id} already exists, skipping.")
+            continue
+        args.append((chunk_id, fault_chunk, batch_folder, batch_size, number_of_batch, output_dir))
+
+    print(f" Avvio analisi parallela in {len(args)} chunk da {chunk_size} fault, usando {n_workers} core...")
+
+    with ProcessPoolExecutor(max_workers=n_workers, initializer=_init_clean_output, initargs=(clean_output_path,)) as executor:
+        list(tqdm(executor.map(_analyze_fault_range_chunk_star, args), total=len(args), desc="Parallel Fault Analysis"))
+
+
+    # Merge finale
+    merged_path = os.path.join(output_dir, "output_analysis.csv")
+    with open(merged_path, 'w', newline='') as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(['Fault_ID', 'batch', 'image', 'output'])
+        for chunk_id in range(len(chunks)):
+            chunk_file = os.path.join(output_dir, f"output_analysis_part_{chunk_id}.csv")
+            if os.path.exists(chunk_file):
+                with open(chunk_file, 'r') as infile:
+                    next(infile)  # Skip header
+                    for row in infile:
+                        outfile.write(row)
+    print(f" Analisi completata. File finale salvato in {merged_path}")
+
+    
 def csv_summary():
     FI_ANALYSIS_PATH = SETTINGS.FI_ANALYSIS_PATH
     FAULT_LIST_PATH = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
@@ -932,6 +1069,167 @@ def csv_summary():
     summary_df.to_csv(OUTPUT_FILE_PATH, index=False)
     print(f" Summary CSV saved to {OUTPUT_FILE_PATH}")
 
+
+
+from concurrent.futures import ProcessPoolExecutor
+import pandas as pd
+import os
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor
+
+def _process_injection(inj_id, group_df, df):
+    fault_outputs = df[df['Fault_ID'] == inj_id]['output']
+
+    masked = (fault_outputs == 0).sum()
+    non_critical = fault_outputs.isin([1, 2, 3]).sum()
+    critical = (fault_outputs == 4).sum()
+
+    layers = group_df['Layer'].tolist()
+    indices = group_df['TensorIndex'].tolist()
+    bits = group_df['Bit'].tolist()
+
+    total = masked + non_critical + critical
+    accuracy = (masked + non_critical) / total if total > 0 else 0.0
+    failure_rate = critical / total if total > 0 else 0.0
+
+    return {
+        'Injection': inj_id,
+        'Layers': str(layers),
+        'TensorIndices': str(indices),
+        'Bits': str(bits),
+        'masked': masked,
+        'non_critical': non_critical,
+        'critical': critical,
+        'accuracy': round(accuracy, 4),
+        'failure_rate': round(failure_rate, 4)
+    }
+
+import pandas as pd
+import os
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor
+
+
+def _process_injection_star(args):
+    inj_id, group_df, df = args
+    return _process_injection(inj_id, group_df, df)
+
+def csv_summary_parallel(n_workers=32):
+    input_file_path = f'{SETTINGS.FI_ANALYSIS_PATH}/output_analysis.csv'
+    fault_list_path = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
+    output_file_path = f'{SETTINGS.FI_SUM_ANALYSIS_PATH}'
+
+    print(f"FI_ANALYSIS_PATH: {SETTINGS.FI_ANALYSIS_PATH}")
+    print(f"Fault list path: {SETTINGS.FAULT_LIST_PATH}")
+    print(f"Summary output path: {output_file_path}")
+
+    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+
+    try:
+        df = pd.read_csv(input_file_path)
+        print(' Output analysis loaded.')
+    except FileNotFoundError:
+        print(f" File not found: {input_file_path}")
+        return
+
+    try:
+        fault_df = pd.read_csv(fault_list_path)
+        print(' Fault list loaded.')
+    except FileNotFoundError:
+        print(f" File not found: {fault_list_path}")
+        return
+
+    grouped = fault_df.groupby("Injection")
+    args = [(inj_id, group.copy(), df) for inj_id, group in grouped]
+
+    print(f" Parallelizing summary on {n_workers} cores...")
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        output_rows = list(tqdm(executor.map(_process_injection_star, args),
+                                total=len(args),
+                                desc="Calculating summary"))
+
+    summary_df = pd.DataFrame(output_rows)
+    summary_df.to_csv(output_file_path, index=False)
+    print(f" Summary CSV saved to {output_file_path}")
+
+
+def _process_summary_chunk(chunk_id, injection_ids, fault_df_path, analysis_csv_path, output_dir):
+    df = pd.read_csv(analysis_csv_path)
+    fault_df = pd.read_csv(fault_df_path)
+
+    fault_outputs_dict = df.groupby("Fault_ID")["output"].apply(list).to_dict()
+    grouped = fault_df.groupby("Injection")
+
+    output_rows = []
+    for inj_id in injection_ids:
+        if inj_id not in grouped.groups:
+            continue
+        group_df = grouped.get_group(inj_id)
+        outputs = fault_outputs_dict.get(inj_id, [])
+
+        masked = sum(1 for o in outputs if o == 0)
+        non_critical = sum(1 for o in outputs if o in [1, 2, 3])
+        critical = sum(1 for o in outputs if o == 4)
+
+        layers = group_df['Layer'].tolist()
+        indices = group_df['TensorIndex'].tolist()
+        bits = group_df['Bit'].tolist()
+
+        total = masked + non_critical + critical
+        accuracy = (masked + non_critical) / total if total > 0 else 0.0
+        failure_rate = critical / total if total > 0 else 0.0
+
+        output_rows.append({
+            'Injection': inj_id,
+            'Layers': str(layers),
+            'TensorIndices': str(indices),
+            'Bits': str(bits),
+            'masked': masked,
+            'non_critical': non_critical,
+            'critical': critical,
+            'accuracy': round(accuracy, 4),
+            'failure_rate': round(failure_rate, 4)
+        })
+
+    chunk_path = os.path.join(output_dir, f"summary_chunk_{chunk_id}.csv")
+    pd.DataFrame(output_rows).to_csv(chunk_path, index=False)
+    return chunk_path
+
+def _process_summary_chunk_star(args):
+    return _process_summary_chunk(*args)
+
+def csv_summary_parallel_chunked(n_workers=32, chunk_size=5000):
+    import SETTINGS
+
+    analysis_csv_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, "output_analysis.csv")
+    fault_df_path = os.path.join(SETTINGS.FAULT_LIST_PATH, SETTINGS.FAULT_LIST_NAME)
+    final_output_path = SETTINGS.FI_SUM_ANALYSIS_PATH
+    output_dir = os.path.dirname(final_output_path)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        fault_df = pd.read_csv(fault_df_path)
+        print("✅ Fault list loaded.")
+    except FileNotFoundError:
+        print(f"❌ File not found: {fault_df_path}")
+        return
+
+    injection_ids = fault_df["Injection"].unique()
+    chunks = [injection_ids[i:i + chunk_size] for i in range(0, len(injection_ids), chunk_size)]
+    args = [(i, list(chunk), fault_df_path, analysis_csv_path, output_dir) for i, chunk in enumerate(chunks)]
+
+    print(f"🧠 Avvio sintesi CSV su {len(chunks)} chunk da {chunk_size} con {n_workers} worker...")
+    chunk_files = []
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        for chunk_path in tqdm(executor.map(_process_summary_chunk_star, args),
+                               total=len(args), desc="Calculating chunked summary"):
+            chunk_files.append(chunk_path)
+
+    # Fusione finale
+    summary_df = pd.concat([pd.read_csv(f) for f in chunk_files], ignore_index=True)
+    summary_df.to_csv(final_output_path, index=False)
+    print(f"✅ Summary CSV finale salvato in {final_output_path}")
 
 
 import numpy as np

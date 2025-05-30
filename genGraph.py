@@ -4,10 +4,8 @@ import seaborn as sns
 import os
 
 def analyze_failure_rates(csv_path):
-    # Carica il file CSV
     summary_df = pd.read_csv(csv_path)
 
-    # Estrai i layer come liste da stringhe
     def parse_list(s):
         try:
             return eval(s)
@@ -22,6 +20,13 @@ def analyze_failure_rates(csv_path):
     # Analisi per layer
     layer_failure_df = summary_df.explode('Parsed_Layers')
     layer_mean_failure = layer_failure_df.groupby('Parsed_Layers')['failure_rate'].mean().sort_values(ascending=False)
+
+    # Medie per layer
+    layer_stats = layer_failure_df.groupby("Parsed_Layers")[["accuracy", "failure_rate"]].mean()
+
+    # Top 50 Injection più critiche
+    top50 = summary_df.sort_values(by="failure_rate", ascending=False).head(50)
+    top50.to_csv("top50faults.csv", index=False)
 
     # Grafico 1: Distribuzione del failure rate
     fig1, ax1 = plt.subplots()
@@ -39,17 +44,27 @@ def analyze_failure_rates(csv_path):
     ax2.set_xlabel("Layer")
     fig2.savefig("failure_rate_per_layer.png")
 
+    # Salva anche su file .txt
+    with open("summary_stats.txt", "w") as f:
+        f.write(f"Failure rate medio complessivo: {mean_failure_rate:.4f}\n\n")
+
+        f.write("Layer più vulnerabili (failure rate medio):\n")
+        f.write(str(layer_mean_failure.head(10)) + "\n\n")
+
+        f.write("Top 10 gruppi di fault più critici (failure_rate più alto):\n")
+        f.write(str(top50[['Injection', 'Layers', 'TensorIndices', 'Bits', 'failure_rate']].head(10)) + "\n\n")
+
+        f.write("Media accuracy e failure_rate per layer:\n")
+        f.write(str(layer_stats) + "\n")
+
+    # Stampa anche su terminale
+    print(f"\nFailure rate medio complessivo: {mean_failure_rate:.4f}")
     print("\n Layer più vulnerabili (failure rate medio):")
     print(layer_mean_failure.head(3))
 
-    # Top 10 Injection più critiche
     print("\n Top 10 gruppi di fault più critici (failure_rate più alto):")
-    top50 = summary_df.sort_values(by="failure_rate", ascending=False).head(50)
-    print(top50[['Injection', 'Layers', 'TensorIndices', 'Bits', 'failure_rate']])
-    top50.to_csv("top50faults.csv", index=False)
+    print(top50[['Injection', 'Layers', 'TensorIndices', 'Bits', 'failure_rate']].head(10))
 
-    # Medie per layer
-    layer_stats = layer_failure_df.groupby("Parsed_Layers")[["accuracy", "failure_rate"]].mean()
     print("\nMedia accuracy e failure_rate per layer:")
     print(layer_stats)
 
@@ -59,6 +74,6 @@ def analyze_failure_rates(csv_path):
     return mean_failure_rate
 
 
-# Esegui l’analisi sul file
+# Esegui l’analisi
 csv_path = "/home/f.terramagra/SFIadvancedmodels-multiple/results_summary/Banknote/SimpleMLP/batch_64/SimpleMLP_summary.csv"
 analyze_failure_rates(csv_path)

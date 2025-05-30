@@ -53,5 +53,5 @@ class FLManager:
                 fault_groups_dict[inj].append(fault)
 
         fault_groups = list(fault_groups_dict.values())
-        print(f'✅ Loaded {len(fault_groups)} fault groups (each group={SETTINGS.NUM_FAULTS_TO_INJECT} faults)')
+        print(f'Loaded {len(fault_groups)} fault groups (each group={SETTINGS.NUM_FAULTS_TO_INJECT} faults)')
         return fault_groups

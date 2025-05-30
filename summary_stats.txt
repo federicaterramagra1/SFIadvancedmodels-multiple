@@ -1,0 +1,26 @@
+Failure rate medio complessivo: 0.0096
+
+Layer più vulnerabili (failure rate medio):
+Parsed_Layers
+fc1    0.009802
+fc2    0.009292
+Name: failure_rate, dtype: float64
+
+Top 10 gruppi di fault più critici (failure_rate più alto):
+       Injection          Layers         TensorIndices    Bits  failure_rate
+28479      28479  ['fc1', 'fc1']  ['(3, 3)', '(4, 3)']  [7, 7]        0.1092
+22639      22639  ['fc1', 'fc1']  ['(2, 3)', '(3, 3)']  [6, 7]        0.1044
+19639      19639  ['fc1', 'fc1']  ['(2, 1)', '(3, 3)']  [7, 7]        0.0995
+25591      25591  ['fc1', 'fc1']  ['(3, 1)', '(3, 3)']  [6, 7]        0.0971
+16191      16191  ['fc1', 'fc1']  ['(1, 3)', '(3, 3)']  [7, 7]        0.0971
+28462      28462  ['fc1', 'fc1']  ['(3, 3)', '(4, 1)']  [7, 6]        0.0947
+28478      28478  ['fc1', 'fc1']  ['(3, 3)', '(4, 3)']  [7, 6]        0.0922
+28319      28319  ['fc1', 'fc1']  ['(3, 3)', '(4, 3)']  [6, 7]        0.0874
+19222      19222  ['fc1', 'fc1']  ['(2, 1)', '(3, 3)']  [5, 7]        0.0874
+22638      22638  ['fc1', 'fc1']  ['(2, 3)', '(3, 3)']  [6, 6]        0.0874
+
+Media accuracy e failure_rate per layer:
+               accuracy  failure_rate
+Parsed_Layers                        
+fc1            0.990198      0.009802
+fc2            0.990708      0.009292

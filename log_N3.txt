@@ -1,0 +1,2 @@
+nohup: ignoring input
+bash: line 1: 264153 Killed                  python main_online.py

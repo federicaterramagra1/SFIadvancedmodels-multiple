@@ -7,10 +7,12 @@ from faultManager.FaultListManager import FLManager
 from faultManager.FaultInjectionManager import FaultInjectionManager
 from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import (
-    get_network, get_device, get_loader, get_fault_list,
+    get_network, get_device, get_loader, get_fault_list, load_from_dict,
     clean_inference, output_definition, fault_list_gen,
-    csv_summary, num_experiments_needed, select_random_faults, train_model, faulty_inference
+    csv_summary, num_experiments_needed, select_random_faults, train_model, faulty_inference, _init_clean_output, output_definition_parallel,output_definition_parallel_chunked , csv_summary_parallel_chunked, csv_summary_parallel
 )
+import time
+
 
 def print_layer_dimensions(network):
     for name, param in network.named_parameters():
@@ -20,6 +22,8 @@ def print_layer_dimensions(network):
 torch.backends.quantized.engine = 'fbgemm'
 
 def main():
+    start_time = time.time()
+
     if SETTINGS.FAULT_LIST_GENERATION:
         fault_list_gen()
 
@@ -49,15 +53,20 @@ def main():
         model_save_path = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK}_trained.pth"
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
-        network = train_model(
-            model=network,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            num_epochs=SETTINGS.NUM_EPOCHS if hasattr(SETTINGS, 'NUM_EPOCHS') else 30,
-            lr=0.001,
-            device=device,
-            save_path=model_save_path
-        )
+        if os.path.exists(model_save_path):
+            print(f"Modello già addestrato trovato in {model_save_path}. Caricamento in corso...")
+            load_from_dict(network, device, model_save_path)
+        else:
+            network = train_model(
+                model=network,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                num_epochs=SETTINGS.NUM_EPOCHS if hasattr(SETTINGS, 'NUM_EPOCHS') else 30,
+                lr=0.001,
+                device=device,
+                save_path=model_save_path
+            )
+
 
         if hasattr(network, 'quantize_model') and callable(network.quantize_model):
             print(" Applying 8-bit static quantization to the network...")
@@ -134,18 +143,29 @@ def main():
 
     if SETTINGS.FI_ANALYSIS:
         try:
-            output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
+            output_definition_parallel(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE, n_workers=32)
             print('Done')
         except:
             print('No loader found to save the labels, creating a new one')
             _, _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
-            output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE)
+            
+            # inizializza la variabile globale CLEAN_OUTPUT
+            _init_clean_output(os.path.join(SETTINGS.CLEAN_OUTPUT_FOLDER, 'clean_output.npy'))
+
+            output_definition_parallel_chunked(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE, n_workers=16)
             print('Done')
+
 
     if SETTINGS.FI_ANALYSIS_SUMMARY:
         print('Generating CSV summary')
-        csv_summary()
+        csv_summary_parallel_chunked(n_workers=32)
         print('CSV summary generated')
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    minutes, seconds = divmod(elapsed_time, 60)
+    print(f"\n Tempo totale di esecuzione: {int(minutes)} minuti e {seconds:.2f} secondi")
+
 
 if __name__ == '__main__':
     main()

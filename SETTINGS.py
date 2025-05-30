@@ -27,7 +27,8 @@ DATASET_NAME = 'Banknote'
 NETWORK_NAME = 'SimpleMLP'
 
 # Fault injection settings
-NUM_FAULTS_TO_INJECT = 2  # Number of faults to inject simultaneously
+NUM_FAULTS_TO_INJECT = 2
+  # Number of faults to inject simultaneously
 
 # if you want to check  only the accuracy of the clean model
 ONLY_CLEAN_INFERENCE = False
@@ -58,7 +59,7 @@ bit = 8
 modules_to_fault = (torch.nn.Conv2d, torch.nn.Linear)
 
 FAULT_LIST_PATH = f'output/fault_list/{DATASET_NAME}/{NETWORK_NAME}/'
-FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list.csv'
+FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list_N{NUM_FAULTS_TO_INJECT}.csv'
 
 
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
@@ -142,6 +143,10 @@ MODEL_PTH_PATH = f'dlModels/{DATASET}/pretrained/{NETWORK}_{DATASET}.pth'
 # FAULT ANALYSIS PATHS
 FI_ANALYSIS_PATH = f'results_summary/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/'
 FI_SUM_ANALYSIS_PATH = f'./results_summary/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/{NETWORK}_summary.csv'
+
+LOAD_MODEL_FROM_PATH = False
+LOAD_MODEL_PATH = "trained_models/Banknote/SimpleMLP.pth"
+
 
 
 

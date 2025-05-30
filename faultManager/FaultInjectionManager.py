@@ -52,10 +52,9 @@ class FaultInjectionManager:
         self.weight_fault_injector = WeightFaultInjector(self.network)
         self.injectable_modules = injectable_modules
 
-
     def run_faulty_campaign_on_weight(self, fault_model: str, fault_list: list, first_batch_only: bool = False, save_output: bool = True):
         """
-        Esegue la fault injection a livello di peso. Salva un file per ogni fault, batch per batch.
+        Esegue la fault injection a livello di peso. Salva un file per ogni batch con tutti i fault.
         """
         print(f" Fault injection con {len(fault_list)} gruppi")
 
@@ -63,25 +62,20 @@ class FaultInjectionManager:
             for batch_id, batch in enumerate(self.loader):
                 data, _ = batch
                 data = data.to(self.device)
-                    
-                    
-                for fault_id, fault_group in enumerate(tqdm(fault_list, desc="Fault Groups")):
-                   self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
+                faulty_outputs_batch = []
 
-                
+                for fault_group in tqdm(fault_list, desc=f'FI on batch {batch_id}'):
+                    self.weight_fault_injector.inject_faults(fault_group, fault_mode=fault_model)
+                    faulty_scores, _, _ = self.__run_inference_on_batch(batch_id, data)
+                    faulty_outputs_batch.append(faulty_scores.cpu().numpy())
+                    self.weight_fault_injector.restore_golden()
 
-                   faulty_scores, _, _ = self.__run_inference_on_batch(batch_id, data)
-                   self.weight_fault_injector.restore_golden()
+                if save_output:
+                    faulty_outputs_batch = np.array(faulty_outputs_batch)
+                    self.save_faulty_outputs(faulty_outputs_batch, batch_id)
 
-                   if save_output:
-                        output_folder = f"{SETTINGS.FAULTY_OUTPUT_FOLDER}/{SETTINGS.FAULT_MODEL}/fault_{fault_id}"
-                        os.makedirs(output_folder, exist_ok=True)
-                        output_path = f"{output_folder}/batch_{batch_id}.npy"
-                        np.save(output_path, faulty_scores.cpu().numpy())
-
-                   if first_batch_only:
-                        break
-
+                if first_batch_only:
+                    break
 
 
 
