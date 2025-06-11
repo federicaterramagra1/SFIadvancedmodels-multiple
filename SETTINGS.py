@@ -78,7 +78,7 @@ NO_LOG_RESULTS = False
 BATCH_SIZE = 64
 
 # fault model to use (check the top of the file for the available models)
-FAULT_MODEL = 'bit-flip'
+FAULT_MODEL = 'stuck-at'
 
 # dataset to use (check the top of the file for the available datasets)
 DATASET = DATASET_NAME
