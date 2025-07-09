@@ -1,157 +1,52 @@
-import copy
+from math import comb
+from main_online_minimal import run_online_fault_injection_minimal
+import pickle
 import os
-import torch
-import SETTINGS
-import random
-from faultManager.FaultListManager import FLManager
-from faultManager.FaultInjectionManager import FaultInjectionManager
-from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
-from utils import (
-    get_network, get_device, get_loader, get_fault_list,
-    clean_inference, output_definition, fault_list_gen,
-    csv_summary, num_experiments_needed, select_random_faults, train_model, faulty_inference
-)
 
-def print_layer_dimensions(network):
-    for name, param in network.named_parameters():
-        if 'weight' in name:
-            print(f"Layer {name} weight shape: {param.shape}")
+def compute_sample_size(N, e=0.01, t=2.58, p=0.5):
+    numerator = t**2 * p * (1 - p)
+    denominator = e**2 + (numerator / N)
+    return int(numerator / denominator)
 
-torch.backends.quantized.engine = 'fbgemm'
+BATCH_SIZE = 16000
+N_BATCH = 10
 
-def main():
-    if SETTINGS.FAULT_LIST_GENERATION:
-        fault_list_gen()
+# Questi sono i batch random da 16k per ciascun N
+BATCHED_SMALL_N = [5, 6, 7, 8, 9, 10]
 
-    if SETTINGS.FAULTS_INJECTION or SETTINGS.ONLY_CLEAN_INFERENCE:
-        device = get_device(use_cuda0=SETTINGS.USE_CUDA_0, use_cuda1=SETTINGS.USE_CUDA_1)
-        print(f'Using device {device}')
+# Questi sono i batch da 16k da faultlist pre-generata
+LARGE_N_LIST = [50, 100, 150, 200, 250, 288]
 
-        _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
+print("=== INIZIO CAMPAGNA BATCH ===")
 
-        network = get_network(network_name=SETTINGS.NETWORK, device=device, dataset_name=SETTINGS.DATASET)
-        print(f"Network structure:\n{network}")
-        print_layer_dimensions(network)
+# ---- 1. Batch random per SMALL N ----
+for n in BATCHED_SMALL_N:
+    N_total = comb(288, n)
+    sample_size = compute_sample_size(N_total)
+    for batch_id in range(1, N_BATCH + 1):
+        print(f"\n--- N = {n} | Batch {batch_id}/{N_BATCH} | Totale combinazioni = {N_total} | Sample = {sample_size}")
+        run_online_fault_injection_minimal(n, sample_size, batch_idx=batch_id)
 
-        train_loader, val_loader = get_loader(
-            network_name=SETTINGS.NETWORK,
-            batch_size=SETTINGS.BATCH_SIZE,
-            dataset_name=SETTINGS.DATASET
-        )
+# ---- 2. Batch da lista unica per LARGE N ----
+for n in LARGE_N_LIST:
+    faultlist_path = f"faultlist_N{n}_160k.pkl"
+    if not os.path.exists(faultlist_path):
+        print(f"[ERROR] Faultlist file {faultlist_path} non trovato! Devi prima generare la lista con lo script apposito.")
+        continue
 
-        print("Valutazione modello prima della quantizzazione:")
-        clean_inference(network, loader, device, SETTINGS.NETWORK)
+    print(f"\n=== Lancio campagne batch su N={n} (10 batch da 16k combinazioni uniche) ===")
+    with open(faultlist_path, "rb") as f:
+        fault_list = pickle.load(f)
 
-        print(" Inizio training del modello...")
-        model_save_path = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK}_trained.pth"
-        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+    if len(fault_list) < BATCH_SIZE * N_BATCH:
+        print(f"[WARNING] Faultlist {faultlist_path} contiene solo {len(fault_list)} combinazioni, meno di {BATCH_SIZE*N_BATCH}.")
+        continue
 
-        network = train_model(
-            model=network,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            num_epochs=SETTINGS.NUM_EPOCHS if hasattr(SETTINGS, 'NUM_EPOCHS') else 15,
-            lr=0.001,
-            device=device,
-            save_path=model_save_path
-        )
+    for batch_id in range(N_BATCH):
+        start = batch_id * BATCH_SIZE
+        stop = (batch_id + 1) * BATCH_SIZE
+        fault_combos = fault_list[start:stop]
+        print(f"--- Batch {batch_id+1}/{N_BATCH} | N={n} | Faults: {len(fault_combos)}")
+        run_online_fault_injection_minimal(n, fault_combos, batch_idx=batch_id+1)
 
-        if hasattr(network, 'quantize_model') and callable(network.quantize_model):
-            print(" Applying 8-bit static quantization to the network...")
-            device = 'cpu'
-            network.to(device)
-            network.quantize_model(calib_loader=train_loader)
-            print(" Quantization completed. Model is now running on CPU.")
-        else:
-            print("The network does not support quantization. Skipping quantization.")
-
-        if SETTINGS.ONLY_CLEAN_INFERENCE:
-            clean_inference(network, loader, device, SETTINGS.NETWORK)
-            return
-
-        _, loader = get_loader(network_name=SETTINGS.NETWORK, batch_size=SETTINGS.BATCH_SIZE, dataset_name=SETTINGS.DATASET)
-
-        print("Clean inference accuracy test:")
-        clean_inference(network, loader, device, SETTINGS.NETWORK)
-
-        clean_fm_folder = SETTINGS.CLEAN_FM_FOLDER
-        faulty_fm_folder = SETTINGS.FAULTY_FM_FOLDER
-        os.makedirs(clean_fm_folder, exist_ok=True)
-        os.makedirs(faulty_fm_folder, exist_ok=True)
-
-        clean_output_folder = SETTINGS.CLEAN_OUTPUT_FOLDER
-
-        clean_ofm_manager = OutputFeatureMapsManager(
-            network=network,
-            loader=loader,
-            module_classes=SETTINGS.MODULE_CLASSES,
-            device=device,
-            fm_folder=clean_fm_folder,
-            clean_output_folder=clean_output_folder
-        )
-
-        clean_ofm_manager.load_clean_output(force_reload=True)
-
-        # BLOCCO: fault injection partizionata
-        current_part = SETTINGS.PART_ID
-        part_fault_list_name = f"{SETTINGS.NETWORK}_{SETTINGS.SEED}_fault_list_part_{current_part}.csv"
-        SETTINGS.FAULT_LIST_NAME = part_fault_list_name
-
-        output_csv_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, f"output_analysis_part_{current_part}.csv")
-        # 🔧 Crea la cartella se non esiste
-        os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
-        if os.path.exists(output_csv_path):
-            with open(output_csv_path, 'r') as f:
-                lines = f.readlines()
-                if len(lines) > 1:
-                    print(f" Parte {current_part} già completata, salto.")
-                    return
-                else:
-                    print(f"File {output_csv_path} vuoto o incompleto. Rigenero.")
-                    os.remove(output_csv_path)
-
-
-        print(f"\n Avvio iniezione per blocco PART_ID={current_part}/{SETTINGS.NUM_PARTS - 1}")
-
-        fault_list_generator = FLManager(
-            network=network,
-            network_name=SETTINGS.NETWORK,
-            device=device,
-            module_class=SETTINGS.MODULE_CLASSES_FAULT_LIST
-        )
-
-        fault_list, injectable_modules = get_fault_list(
-            fault_model=SETTINGS.FAULT_MODEL,
-            fault_list_generator=fault_list_generator
-        )
-
-        fault_injection_executor = FaultInjectionManager(
-            network=network,
-            network_name=SETTINGS.NETWORK,
-            device=device,
-            loader=loader,
-            clean_output=clean_ofm_manager.clean_output,
-            injectable_modules=injectable_modules,
-            num_faults_to_inject=SETTINGS.NUM_FAULTS_TO_INJECT
-        )
-
-        fault_injection_executor.run_faulty_campaign_on_weight(
-            fault_model=SETTINGS.FAULT_MODEL,
-            fault_list=fault_list,
-            first_batch_only=False,
-            save_output=True,
-            part_id=current_part  # salvataggio batch_{i}_part_{current_part}.npy
-        )
-
-        # OUTPUT ANALYSIS
-        output_definition(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE, part_id=current_part)
-        print(f" Analisi PART_ID={current_part} salvata in {output_csv_path}")
-
-    # ANALISI FINALE
-    if SETTINGS.FI_ANALYSIS_SUMMARY:
-        print('Generating CSV summary...')
-        csv_summary()
-        print('CSV summary generated')
-
-if __name__ == '__main__':
-    main()
+print("\nCampagna completata")

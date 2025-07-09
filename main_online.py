@@ -99,7 +99,8 @@ def run_online_fault_injection():
         faulty_predictions = []
 
         with torch.no_grad():
-            injector.inject_faults(faults, fault_mode='bit-flip')
+            injector.inject_faults(faults, fault_mode=SETTINGS.FAULT_MODEL)
+
 
             for data, labels in test_loader:
                 data = data.to(device)
