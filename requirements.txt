@@ -1,8 +1,0 @@
-torch==2.1.2
-tqdm==4.66.1
-typing_extensions==4.9.0
-fonttools==4.47.2
-torchvision==0.16.2
-numpy==1.26.3
-pandas==2.2.0
-torchinfo==1.8.0
