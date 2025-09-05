@@ -1,3 +1,15 @@
+
+# Fault injection results
+*.csv
+*.txt
+*.npy
+*.pkl
+
+# Output folders
+output/
+results_summary/
+log/
+trained_models/
 output/
 log/
 Datasets/

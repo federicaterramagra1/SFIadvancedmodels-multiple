@@ -9,7 +9,7 @@ from ofmapManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from utils import (
     get_network, get_device, get_loader, get_fault_list, load_from_dict,
     clean_inference, output_definition, fault_list_gen,
-    csv_summary, num_experiments_needed, select_random_faults, train_model, faulty_inference, _init_clean_output, output_definition_parallel,output_definition_parallel_chunked , csv_summary_parallel_chunked, csv_summary_parallel
+    csv_summary, save_global_metrics_summary_txt, num_experiments_needed, select_random_faults, train_model, faulty_inference, _init_clean_output, output_definition_parallel,output_definition_parallel_chunked , csv_summary_parallel_chunked, csv_summary_parallel
 )
 import time
 
@@ -117,7 +117,9 @@ def main():
             fault_list_generator=fault_list_generator
         )
 
+        # Limita la fault list se richiesto, ma in modo riproducibile
         if SETTINGS.FAULTS_TO_INJECT is not None and 0 < SETTINGS.FAULTS_TO_INJECT < len(fault_list):
+            random.seed(SETTINGS.SEED)  # Garantisce che la selezione sia ripetibile
             fault_list = random.sample(fault_list, SETTINGS.FAULTS_TO_INJECT)
             print(f" Fault list limitata a {SETTINGS.FAULTS_TO_INJECT} fault.")
         else:
@@ -143,7 +145,7 @@ def main():
 
     if SETTINGS.FI_ANALYSIS:
         try:
-            output_definition_parallel(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE, n_workers=32)
+            output_definition_parallel(test_loader=loader, batch_size=SETTINGS.BATCH_SIZE, n_workers=8)
             print('Done')
         except:
             print('No loader found to save the labels, creating a new one')
@@ -158,9 +160,10 @@ def main():
 
     if SETTINGS.FI_ANALYSIS_SUMMARY:
         print('Generating CSV summary')
-        csv_summary_parallel_chunked(n_workers=32)
+        csv_summary()
         print('CSV summary generated')
-    
+        save_global_metrics_summary_txt()
+
     end_time = time.time()
     elapsed_time = end_time - start_time
     minutes, seconds = divmod(elapsed_time, 60)

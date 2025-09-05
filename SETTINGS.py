@@ -8,6 +8,10 @@ from dlModels.GTSRB import resnet_GTSRB, vgg_GTSRB, densenet_GTSRB
 from dlModels.CIFAR100 import densenet_cifar100, resnet_cifar100, googlenet_cifar100
 from dlModels.BreastCancer.mlp import SimpleMLP
 from dlModels.Banknote.mlp import SimpleMLP
+from dlModels.Iris.mlp import MiniMLP3
+from dlModels.Wine.mlp import WineMLP
+from dlModels.DryBean.mlp import BeanMLP
+from dlModels.Letter.mlp import LetterMLP
 
 '''
 FAULT_MODEL available: 'stuck-at_params', 'bit-flip'
@@ -25,9 +29,10 @@ DATASET available: 'BreastCancer'
 # network and dataset to use
 DATASET_NAME = 'Banknote'
 NETWORK_NAME = 'SimpleMLP'
+NUM_EPOCHS = 100
 
 # Fault injection settings
-NUM_FAULTS_TO_INJECT = 7
+NUM_FAULTS_TO_INJECT = 1
   # Number of faults to inject simultaneously
 
 # if you want to check  only the accuracy of the clean model
@@ -65,7 +70,7 @@ FAULT_LIST_NAME = f'{NETWORK_NAME}_{SEED}_fault_list_N{NUM_FAULTS_TO_INJECT}.csv
 # ------------------------------------ FAULT INJECTION SETTINGS ------------------------------------
 
 #fault to inject in the model from the faul list, insert -1 to do an exhaustive campaign
-#FAULTS_TO_INJECT = 4000000
+FAULTS_TO_INJECT = -1
 
 # use the GPU is available
 USE_CUDA_0 = True
@@ -146,7 +151,7 @@ FI_ANALYSIS_PATH = f'results_summary/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/'
 FI_SUM_ANALYSIS_PATH = f'./results_summary/{DATASET}/{NETWORK}/batch_{BATCH_SIZE}/{NETWORK}_summary.csv'
 
 LOAD_MODEL_FROM_PATH = False
-LOAD_MODEL_PATH = "trained_models/Banknote/SimpleMLP.pth"
+LOAD_MODEL_PATH = "trained_models/Iris/MiniMLP3.pth"
 
 
 

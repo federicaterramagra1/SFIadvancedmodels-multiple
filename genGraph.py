@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import SETTINGS
 
 def analyze_failure_rates(csv_path):
     summary_df = pd.read_csv(csv_path)

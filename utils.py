@@ -18,6 +18,7 @@ from faultManager.NeuronFault import NeuronFault
 from faultManager.WeightFault import WeightFault
 
 from dlModels.BreastCancer.mlp import SimpleMLP
+from dlModels.Wine.mlp import WineMLP
 
 from torchvision.models import resnet
 from torchvision.models.densenet import _DenseBlock, _Transition
@@ -32,6 +33,10 @@ from tqdm import tqdm
 from sklearn.datasets import load_breast_cancer
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import load_wine
 
 class UnknownNetworkException(Exception):
     pass
@@ -195,6 +200,17 @@ def get_network(network_name: str,
             network.quantize_model = network.module.quantize_model
         else:
             raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+        
+    elif dataset_name == 'Letter':
+        print(f'Loading network {network_name} for Letter ...')
+        if network_name == 'LetterMLP':
+            from dlModels.Letter.mlp import LetterMLP
+            network = LetterMLP()
+            network.to(device)
+            return network
+        else:
+            raise ValueError(f"Unknown network '{network_name}' for dataset 'Letter'")
+
     elif dataset_name == 'Banknote':
             from dlModels.Banknote.mlp import SimpleMLP
             print(f'Loading network {network_name} for Banknote ...')
@@ -202,9 +218,38 @@ def get_network(network_name: str,
                 from dlModels.Banknote.mlp import SimpleMLP
                 network = SimpleMLP()
                 network.to(device)
-
+                
             else:
                 raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+    
+    elif dataset_name == "DryBean":
+        print(f'Loading network {network_name} for DryBean ...')
+        if network_name == "BeanMLP":
+            from dlModels.DryBean.mlp import BeanMLP
+            network = BeanMLP()
+            network.to(device)
+        else:
+            raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+
+    
+    elif dataset_name == 'Iris':
+        if network_name == 'MiniMLP3':
+            from dlModels.Iris.mlp import MiniMLP3
+            print('Loading MiniMLP3 for Iris dataset...')
+            network = MiniMLP3()
+            network.to(device)
+        else:
+            raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+
+    elif dataset_name == 'Wine':
+            if network_name == 'WineMLP':
+                from dlModels.Iris.mlp import MiniMLP3
+                print('Loading WineMLP for Wine dataset...')
+                network = WineMLP()
+                network.to(device)
+            else:
+                raise ValueError(f"Unknown network '{network_name}' for dataset '{dataset_name}'")
+
     # Move the model to the specified device
     network.to(device)
 
@@ -212,71 +257,79 @@ def get_network(network_name: str,
     
     return network
 
-
 def get_loader(network_name: str,
                batch_size: int,
                image_per_class: int = None,
                dataset_name: str = None,
-               network: torch.nn.Module = None) -> DataLoader:
+               network: torch.nn.Module = None) -> tuple:
     """
     Return the loader corresponding to a given network and with a specific batch size
-    :param network_name: The name of the network
-    :param batch_size: The batch size
-    :param image_per_class: How many images to load for each class
-    :param network: Default None. The network used to select the image per class. If not None, select the image_per_class
-    that maximize this network accuracy. If not specified, images are selected at random
-    :return: The DataLoader
     """
+
+    if dataset_name == 'Letter':
+        print('Loading Letter dataset...')
+        return load_letter_dataset(batch_size=batch_size)
+
     if dataset_name == 'Banknote':
         from utils import load_banknote_dataset
         print('Loading Banknote dataset...')
-        train_loader, val_loader, test_loader = load_banknote_dataset(batch_size=batch_size)
-        return train_loader, val_loader, test_loader
-
-        
-    if network_name == 'SimpleMLP':
-        # Load Breast Cancer dataset with the correct parameters
-        train_loader, val_loader, test_loader = load_breastCancer_datasets(
-            train_batch_size=batch_size,
-            test_batch_size=batch_size
-        )
-        return train_loader, test_loader  # Return only train and test loaders
-
-    if network_name == 'BiggerMLP':
-        # Load Breast Cancer dataset with the correct parameters
-        train_loader, val_loader, test_loader = load_breastCancer_datasets(
-            train_batch_size=batch_size,
-            test_batch_size=batch_size
-        )
-        return train_loader, test_loader  # Return only train and test loaders
-
-            
-    if 'CIFAR10' == dataset_name:
-        print('Loading CIFAR10 dataset')
-        train_loader, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size,
-                                             test_image_per_class=image_per_class)
-        
-    elif 'CIFAR100' == dataset_name:
-        print('Loading CIFAR100 dataset')
-        train_loader, _, loader = Load_CIFAR100_datasets(test_batch_size=batch_size,
-                                             test_image_per_class=image_per_class)
-        
-    elif 'GTSRB' == dataset_name:
-        print('Loading GTSRB dataset')
-        train_loader, _, loader = Load_GTSRB_datasets(test_batch_size=batch_size,
+        return load_banknote_dataset(batch_size=batch_size)
     
-                                             test_image_per_class=image_per_class)
-    elif dataset_name == 'BreastCancer':
+    if dataset_name == 'Wine':
+        from utils import load_wine_dataset
+        print('Loading Wine dataset...')
+        return load_wine_dataset(batch_size=batch_size)
+
+    if dataset_name == 'DryBean':
+        from utils import load_drybean_dataset
+        print('Loading DryBean dataset...')
+        return load_drybean_dataset(batch_size=batch_size)
+
+    if dataset_name == 'Iris':
+        from utils import load_iris_dataset
+        print('Loading Iris dataset...')
+        return load_iris_dataset(batch_size=batch_size)
+
+    if dataset_name == 'BreastCancer':
         print('Loading BreastCancer dataset...')
-        train_loader, val_loader, test_loader = load_breastCancer_datasets(
+        return load_breastCancer_datasets(
             train_batch_size=batch_size,
             test_batch_size=batch_size
         )
 
+    if dataset_name == 'CIFAR10':
+        print('Loading CIFAR10 dataset...')
+        train_loader, _, test_loader = load_CIFAR10_datasets(
+            test_batch_size=batch_size,
+            test_image_per_class=image_per_class
+        )
+        return train_loader, None, test_loader
 
-    print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
+    if dataset_name == 'CIFAR100':
+        print('Loading CIFAR100 dataset...')
+        train_loader, _, test_loader = Load_CIFAR100_datasets(
+            test_batch_size=batch_size,
+            test_image_per_class=image_per_class
+        )
+        return train_loader, None, test_loader
 
-    return train_loader, loader
+    if dataset_name == 'GTSRB':
+        print('Loading GTSRB dataset...')
+        train_loader, _, test_loader = Load_GTSRB_datasets(
+            test_batch_size=batch_size,
+            test_image_per_class=image_per_class
+        )
+        return train_loader, None, test_loader
+
+    if network_name in ['SimpleMLP', 'BiggerMLP']:
+        print(f"Loading BreastCancer dataset for {network_name}...")
+        return load_breastCancer_datasets(
+            train_batch_size=batch_size,
+            test_batch_size=batch_size
+        )
+
+    raise ValueError(f"Dataset/network '{dataset_name or network_name}' non riconosciuto")
+
 
 
 def get_delayed_start_module(network: Module,
@@ -467,6 +520,55 @@ def formatted_print(fault_list: list,
     os.makedirs(output_folder, exist_ok=True)
     complete_df.to_csv(f'{output_folder}/{file_prefix}fault_injection_batch_{batch_id}.csv', index=False)
 
+
+def load_letter_dataset(batch_size=64):
+    """
+    Carica il dataset Letter Recognition da file CSV.
+    Il dataset dovrebbe trovarsi in Datasets/Letter/letter-recognition.csv
+    Usa un subset di 7 lettere (A–G) per ridurre classi e batch.
+    """
+    dataset_path = os.path.join("Datasets", "Letter", "letter-recognition.csv")
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(f"File non trovato: {dataset_path}")
+
+    # Caricamento e parsing
+    df = pd.read_csv(dataset_path, header=None)
+    df.columns = ["letter"] + [f"f{i}" for i in range(1, 17)]
+
+    # Conversione etichette A–Z in 0–25
+    df["letter"] = df["letter"].apply(lambda x: ord(x) - ord("A"))
+
+    # Seleziona solo 7 classi (lettere A–G → 0–6)
+    df = df[df["letter"] <= 6]
+
+    # Riduci dataset a 1000 campioni stratificati
+    df_small = df.groupby("letter", group_keys=False).apply(lambda x: x.sample(n=200, random_state=42))
+
+    X = df_small.drop("letter", axis=1).values
+    y = df_small["letter"].values
+
+    # Normalizzazione
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    # Split train/val/test
+    X_trainval, X_test, y_trainval, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_train, X_val, y_train, y_val = train_test_split(X_trainval, y_trainval, test_size=0.1, random_state=42, stratify=y_trainval)
+
+    # Tensori
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val = torch.tensor(y_val, dtype=torch.long)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.long)
+
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
+
+    print("Letter dataset loaded (subset of 7 classes, ~1000 samples).")
+    return train_loader, val_loader, test_loader
 
 
 
@@ -714,6 +816,104 @@ def load_banknote_dataset(batch_size=32):
 
     return train_loader, val_loader, test_loader
 
+from scipy.io import arff
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+from sklearn.utils import resample
+
+def load_drybean_dataset(batch_size=64, total_samples=1400):
+    path = os.path.join("dlModels", "DryBean", "Dry_Bean_Dataset.arff")
+    data, meta = arff.loadarff(path)
+    df = pd.DataFrame(data)
+
+    # Decodifica le label da byte a stringa
+    if isinstance(df["Class"][0], bytes):
+        df["Class"] = df["Class"].str.decode("utf-8")
+
+    # Esegui un downsampling stratificato per avere total_samples esatti
+    df_small = df.groupby("Class", group_keys=False).apply(
+        lambda x: x.sample(frac=total_samples/len(df), random_state=42)
+    ).reset_index(drop=True)
+
+    # Feature e target
+    X = df_small.drop("Class", axis=1).values.astype("float32")
+    y = LabelEncoder().fit_transform(df_small["Class"])
+
+    # Normalizzazione
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    # Split stratificato: 72% train, 8% val, 20% test
+    X_trainval, X_test, y_trainval, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(X_trainval, y_trainval, test_size=0.1, stratify=y_trainval, random_state=42)
+
+    def make_loader(X, y, shuffle=True):
+        return DataLoader(
+            TensorDataset(torch.tensor(X), torch.tensor(y, dtype=torch.long)),
+            batch_size=batch_size, shuffle=shuffle
+        )
+
+    return (
+        make_loader(X_train, y_train, shuffle=True),
+        make_loader(X_val, y_val, shuffle=True),
+        make_loader(X_test, y_test, shuffle=False)  # QUI è fondamentale!
+    )
+
+
+def load_iris_dataset(batch_size=32):
+
+    iris = load_iris()
+    X = iris.data
+    y = iris.target
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    X_trainval, X_test, y_trainval, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42, stratify=y)
+    X_train, X_val, y_train, y_val = train_test_split(X_trainval, y_trainval, test_size=0.1, random_state=42, stratify=y_trainval)
+
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val = torch.tensor(y_val, dtype=torch.long)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.long)
+
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
+
+def load_wine_dataset(batch_size=32):
+    data = load_wine()
+    X = data.data
+    y = data.target
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
+        X_scaled, y, test_size=0.3, random_state=42, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_trainval, y_trainval, test_size=0.1, random_state=42, stratify=y_trainval
+    )
+
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val = torch.tensor(y_val, dtype=torch.long)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.long)
+
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
+
+    return train_loader, val_loader, test_loader
+
 
 def load_from_dict(network, device, path, function=None):
     if '.th' in path:
@@ -840,14 +1040,14 @@ def output_definition(test_loader, batch_size):
 
                 masked = np.all(clean_batch == faulty[fault_id], axis=1)
 
-                outputs = np.full(current_batch_size, 4)
+                outputs = np.full(current_batch_size, 4, dtype=int)
                 outputs[masked] = 0
                 outputs[same_label & (delta < 0.1)] = 1
                 outputs[same_label & (delta >= 0.1) & (delta < 0.2)] = 2
                 outputs[same_label & (delta >= 0.2)] = 3
 
                 for j in range(current_batch_size):
-                    writer.writerow([fault_id, i, j, str(outputs[j])])
+                    writer.writerow([fault_id, i, j, int(outputs[j])])
 
     print("\nOutput analysis completata.")
 
@@ -856,7 +1056,6 @@ from concurrent.futures import ProcessPoolExecutor
 
 def _analyze_fault_range(start_id, end_id, batch_folder, clean_output_path, batch_size, n_batches):
     results = []
-
     clean_output = np.load(clean_output_path, allow_pickle=True)
 
     for fault_id in range(start_id, end_id):
@@ -878,17 +1077,18 @@ def _analyze_fault_range(start_id, end_id, batch_folder, clean_output_path, batc
                 delta = abs(faulty_out[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
 
                 if np.array_equal(clean, faulty_out):
-                    results.append([fault_id, i, j, '0'])
+                    results.append([fault_id, i, j, 0])
                 elif clean_top == faulty_top:
                     if delta >= 0.2:
-                        results.append([fault_id, i, j, '3'])
+                        results.append([fault_id, i, j, 3])
                     elif delta >= 0.1:
-                        results.append([fault_id, i, j, '2'])
+                        results.append([fault_id, i, j, 2])
                     else:
-                        results.append([fault_id, i, j, '1'])
+                        results.append([fault_id, i, j, 1])
                 else:
-                    results.append([fault_id, i, j, '4'])
+                    results.append([fault_id, i, j, 4])
     return results
+
 
 def _analyze_fault_range_star(args):
     return _analyze_fault_range(*args)
@@ -945,7 +1145,7 @@ def _analyze_fault_range_chunk(chunk_id, fault_ids, batch_folder, batch_size, n_
     global CLEAN_OUTPUT
     results = []
 
-    print(f"[Chunk {chunk_id}] Analisi fault IDs: {fault_ids[:5]}...")  # per conferma
+    print(f"[Chunk {chunk_id}] Analisi fault IDs: {fault_ids[:5]}...")
 
     for fault_id in fault_ids:
         for i in range(n_batches):
@@ -966,17 +1166,16 @@ def _analyze_fault_range_chunk(chunk_id, fault_ids, batch_folder, batch_size, n_
                 delta = abs(faulty_out[clean_top] - clean[clean_top]) / max(1e-8, abs(clean[clean_top]))
 
                 if np.array_equal(clean, faulty_out):
-                    results.append([fault_id, i, j, '0'])
+                    results.append([fault_id, i, j, 0])
                 elif clean_top == faulty_top:
                     if delta >= 0.2:
-                        results.append([fault_id, i, j, '3'])
+                        results.append([fault_id, i, j, 3])
                     elif delta >= 0.1:
-                        results.append([fault_id, i, j, '2'])
+                        results.append([fault_id, i, j, 2])
                     else:
-                        results.append([fault_id, i, j, '1'])
+                        results.append([fault_id, i, j, 1])
                 else:
-                    results.append([fault_id, i, j, '4'])
-    
+                    results.append([fault_id, i, j, 4])
 
     chunk_file = os.path.join(output_dir, f"output_analysis_part_{chunk_id}.csv")
     with open(chunk_file, 'w', newline='') as f:
@@ -985,9 +1184,8 @@ def _analyze_fault_range_chunk(chunk_id, fault_ids, batch_folder, batch_size, n_
         writer.writerows(results)
 
     print(f"[Chunk {chunk_id}] Completato. Salvato in {chunk_file}")
-
-
     return chunk_file
+
 
 def _analyze_fault_range_chunk_star(args):
     return _analyze_fault_range_chunk(*args)
@@ -1024,7 +1222,8 @@ def output_definition_parallel_chunked(test_loader, batch_size, n_workers=32, ch
     print(f" Avvio analisi parallela in {len(args)} chunk da {chunk_size} fault, usando {n_workers} core...")
 
     with ProcessPoolExecutor(max_workers=n_workers, initializer=_init_clean_output, initargs=(clean_output_path,)) as executor:
-        list(tqdm(executor.map(_analyze_fault_range_chunk_star, args), total=len(args), desc="Parallel Fault Analysis"))
+        for i, _ in enumerate(executor.map(_analyze_fault_range_chunk_star, args)):
+            print(f"Chunk {i + 1}/{len(args)} completato")
 
 
     # Merge finale
@@ -1040,11 +1239,12 @@ def output_definition_parallel_chunked(test_loader, batch_size, n_workers=32, ch
                     for row in infile:
                         outfile.write(row)
     print(f" Analisi completata. File finale salvato in {merged_path}")
-
-    
 def csv_summary():
+    import pandas as pd
+    import os
+
     FI_ANALYSIS_PATH = SETTINGS.FI_ANALYSIS_PATH
-    FAULT_LIST_PATH = f'{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}'
+    FAULT_LIST_PATH = os.path.join(SETTINGS.FAULT_LIST_PATH, SETTINGS.FAULT_LIST_NAME)
     OUTPUT_FILE_PATH = SETTINGS.FI_SUM_ANALYSIS_PATH
 
     print(f"FI_ANALYSIS_PATH: {FI_ANALYSIS_PATH}")
@@ -1053,22 +1253,91 @@ def csv_summary():
 
     os.makedirs(os.path.dirname(OUTPUT_FILE_PATH), exist_ok=True)
 
-    df_out = pd.read_csv(f'{FI_ANALYSIS_PATH}/output_analysis.csv')
-    print(' Output analysis loaded.')
-    df_fault = pd.read_csv(FAULT_LIST_PATH)
-    print(' Fault list loaded.')
+    fault_df = pd.read_csv(FAULT_LIST_PATH, usecols=["Injection", "Layer", "TensorIndex", "Bit"])
+    print(" Fault list loaded.")
 
-    injection_ids = df_fault['Injection'].unique()
+    output_analysis_path = os.path.join(FI_ANALYSIS_PATH, "output_analysis.csv")
+    df = pd.read_csv(output_analysis_path)
 
-    print(f" Starting multiprocessing with {cpu_count()} cores...")
+    # assicurati che 'output' sia intero
+    if df['output'].dtype != int:
+        df['output'] = df['output'].astype(int)
 
-    with Pool(processes=cpu_count(), initializer=init_worker, initargs=(df_out, df_fault)) as pool:
-        results = list(tqdm(pool.imap(process_injection, injection_ids), total=len(injection_ids), desc="Calculating summary"))
+    summary_rows = []
+    for injection_id, group in fault_df.groupby("Injection"):
+        # match corretto: Fault_ID == Injection
+        subset = df[df['Fault_ID'] == injection_id]
 
-    summary_df = pd.DataFrame(results)
+        masked = (subset['output'] == 0).sum()
+        non_critical = subset['output'].isin([1, 2, 3]).sum()
+        critical = (subset['output'] == 4).sum()
+        total = masked + non_critical + critical
+
+        acc = (masked + non_critical) / total if total > 0 else 0.0
+        fr = critical / total if total > 0 else 0.0
+
+        summary_rows.append({
+            "Injection": injection_id,
+            "Layers": list(group["Layer"].unique()),
+            "TensorIndices": list(group["TensorIndex"].unique()),
+            "Bits": list(group["Bit"].unique()),
+            "masked": int(masked),
+            "non_critical": int(non_critical),
+            "critical": int(critical),
+            "accuracy": round(acc, 4),
+            "failure_rate": round(fr, 4)
+        })
+
+    summary_df = pd.DataFrame(summary_rows)
     summary_df.to_csv(OUTPUT_FILE_PATH, index=False)
     print(f" Summary CSV saved to {OUTPUT_FILE_PATH}")
 
+
+
+def save_global_metrics_summary_txt():
+    import pandas as pd
+    import os
+
+    csv_path = SETTINGS.FI_SUM_ANALYSIS_PATH
+    if not os.path.exists(csv_path):
+        print(f"Summary CSV not found: {csv_path}")
+        return
+
+    from pandas.errors import EmptyDataError
+
+    try:
+        summary_iter = pd.read_csv(csv_path, chunksize=10000)
+    except EmptyDataError:
+        print(f"[WARNING] {csv_path} is empty or has no columns. Skipping summary generation.")
+        return
+
+
+    total = masked = non_critical = critical = 0
+
+    for chunk in summary_iter:
+        masked += chunk['masked'].sum()
+        non_critical += chunk['non_critical'].sum()
+        critical += chunk['critical'].sum()
+        total += (chunk['masked'] + chunk['non_critical'] + chunk['critical']).sum()
+
+    acc = (masked + non_critical) / total if total > 0 else 0
+    fr = critical / total if total > 0 else 0
+
+    fault_bits = SETTINGS.NUM_FAULTS_TO_INJECT
+    model = SETTINGS.NETWORK
+    dataset = SETTINGS.DATASET
+    txt_path = os.path.join(SETTINGS.FI_ANALYSIS_PATH, f"N{fault_bits}_{dataset}_{model}_summary.txt")
+
+    with open(txt_path, 'w') as f:
+        f.write(f"NUM_FAULTS_TO_INJECT: {fault_bits}\n")
+        f.write(f"Total faults: {total}\n")
+        f.write(f"Masked: {masked}\n")
+        f.write(f"NonCritical: {non_critical}\n")
+        f.write(f"Critical: {critical}\n")
+        f.write(f"Accuracy (masked + non-critical): {acc:.4f}\n")
+        f.write(f"Failure Rate (critical): {fr:.4f}\n")
+
+    print(f" Summary TXT saved to: {txt_path}")
 
 
 from concurrent.futures import ProcessPoolExecutor
@@ -1210,9 +1479,9 @@ def csv_summary_parallel_chunked(n_workers=32, chunk_size=5000):
 
     try:
         fault_df = pd.read_csv(fault_df_path)
-        print("✅ Fault list loaded.")
+        print(" Fault list loaded.")
     except FileNotFoundError:
-        print(f"❌ File not found: {fault_df_path}")
+        print(f" File not found: {fault_df_path}")
         return
 
     injection_ids = fault_df["Injection"].unique()
@@ -1229,8 +1498,7 @@ def csv_summary_parallel_chunked(n_workers=32, chunk_size=5000):
     # Fusione finale
     summary_df = pd.concat([pd.read_csv(f) for f in chunk_files], ignore_index=True)
     summary_df.to_csv(final_output_path, index=False)
-    print(f"✅ Summary CSV finale salvato in {final_output_path}")
-
+    print(f" Summary CSV finale salvato in {final_output_path}")
 
 import numpy as np
 import random
@@ -1294,14 +1562,17 @@ def fault_list_gen():
         selected = random.sample(combinations, SETTINGS.FAULTS_TO_INJECT)
         print(f" Fault list RANDOM: {SETTINGS.FAULTS_TO_INJECT} combinazioni da {SETTINGS.NUM_FAULTS_TO_INJECT} bit flip.")
 
-    # 4. Scrivi il file finale
+     # 4. Scrivi il file finale
     final_csv_path = f"{SETTINGS.FAULT_LIST_PATH}/{SETTINGS.FAULT_LIST_NAME}"
     with open(final_csv_path, 'w', newline='') as final_file:
         writer = csv.writer(final_file)
         writer.writerow(['Injection', 'Layer', 'TensorIndex', 'Bit'])
         for inj_id, combo in enumerate(selected):
             for layer, idx, bit in combo:
-                writer.writerow([inj_id, layer, idx, bit])
+                writer.writerow([inj_id, layer, str(idx), bit])
+
+
+
 
     print(f" Fault list finale scritta in {final_csv_path} con {len(selected)} iniezioni.")
 

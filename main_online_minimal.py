@@ -1,169 +1,171 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import torch
 import time
-from itertools import product
+import os
+import random
+from itertools import islice, product, combinations
 from tqdm import tqdm
+import heapq
+import math
+
 from faultManager.WeightFault import WeightFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-from utils import get_loader
-import heapq
-from torch.quantization import QuantWrapper, get_default_qconfig
-from dlModels.Banknote.mlp import SimpleMLP
-import random
+from utils import get_loader, load_from_dict, get_network
+import SETTINGS
 
-def _build_fault_list(num_faults_to_inject, faults_to_inject, model):
-    all_faults = []
+
+def _get_quant_weight(module):
+    """API-compat: preferisci module.weight(), fallback a _packed_params._weight_bias()."""
+    # API pubblica
+    if hasattr(module, "weight"):
+        try:
+            return module.weight()
+        except Exception:
+            pass
+    # Fallback
+    if hasattr(module, "_packed_params") and hasattr(module._packed_params, "_weight_bias"):
+        w, _ = module._packed_params._weight_bias()
+        return w
+    raise RuntimeError("Impossibile ottenere il peso quantizzato dal modulo.")
+
+
+def _build_all_faults(model):
+    faults = []
     for name, module in model.named_modules():
-        if isinstance(module, torch.nn.quantized.Linear):
-            weight, _ = module._packed_params._weight_bias()
-            shape = weight.shape
+        if isinstance(module, (torch.nn.quantized.Linear, torch.nn.quantized.Conv2d)):
+            try:
+                w = _get_quant_weight(module)
+            except Exception:
+                continue
+            shape = w.shape
             for idx in product(*[range(s) for s in shape]):
                 for bit in range(8):
-                    all_faults.append((name, idx, bit))
-    print(f"Total single faults available: {len(all_faults)}")
-    print(f"Running random campaign with {faults_to_inject} injections of {num_faults_to_inject} simultaneous faults")
-    final_combinations = set()
-    while len(final_combinations) < faults_to_inject:
-        combo = tuple(sorted(random.sample(all_faults, num_faults_to_inject)))
-        final_combinations.add(combo)
-    fault_combinations = list(final_combinations)
-    random.shuffle(fault_combinations)
-    return fault_combinations
+                    faults.append((name, idx, bit))
+    return faults
 
-def run_online_fault_injection_minimal(num_faults_to_inject, fault_combinations_or_num, batch_idx=None):
-    """
-    fault_combinations_or_num può essere:
-        - una lista di tuple (batch), usata per N grandi e batching
-        - un int: n campioni random, come prima
-    """
-    start_time = time.time()
+
+def random_combination_generator(pool, r, seed=None):
+    if seed is not None:
+        random.seed(seed)
+    seen = set()
+    while True:
+        combo = tuple(sorted(random.sample(pool, r)))
+        if combo not in seen:
+            seen.add(combo)
+            yield combo
+
+
+def build_and_quantize_once():
     device = torch.device("cpu")
-    print(f"Using device: {device}")
+    model = get_network(SETTINGS.NETWORK_NAME, device, SETTINGS.DATASET_NAME)
+    model.eval()
 
-    print("Loading raw model and applying quantization manually...")
-    base_model = SimpleMLP()
-    base_model.qconfig = get_default_qconfig("fbgemm")
-    model = QuantWrapper(base_model)
-    model.quantize_model = base_model.quantize_model
-    model.to(device)
+    ckpt = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK_NAME}_trained.pth"
+    load_from_dict(model, device, ckpt)
+    print("✓ modello caricato")
 
-    _, _, test_loader = get_loader("SimpleMLP", 64, dataset_name="Banknote")
-    print("Test loader ready.")
+    train_loader, _, _ = get_loader(
+        dataset_name=SETTINGS.DATASET_NAME,
+        batch_size=SETTINGS.BATCH_SIZE,
+        network_name=SETTINGS.NETWORK_NAME
+    )
 
-    if hasattr(model, 'quantize_model') and callable(model.quantize_model):
-        print("Applying quantization using model.quantize_model...")
-        model.quantize_model(calib_loader=test_loader)
-        print("Quantization completed.")
-    else:
-        print("WARNING: model.quantize_model not found. Skipping quantization.")
+    if hasattr(model, "quantize_model"):
+        model.quantize_model(train_loader)
+        model.eval()  # assicurati eval anche dopo la quantizzazione
+        print("✓ quantizzazione completata")
 
-    print("Computing clean predictions...")
-    clean_predictions = []
+    _, _, test_loader = get_loader(
+        network_name=SETTINGS.NETWORK_NAME,
+        batch_size=SETTINGS.BATCH_SIZE,
+        dataset_name=SETTINGS.DATASET_NAME
+    )
+
+    clean_preds = []
     with torch.no_grad():
         for data, _ in test_loader:
-            data = data.to(device)
-            outputs = model(data)
-            preds = torch.argmax(outputs, dim=1)
-            clean_predictions.append(preds.cpu())
-    clean_predictions = torch.cat(clean_predictions)
+            clean_preds.append(torch.argmax(model(data.to(device)), 1).cpu())
+    clean_preds = torch.cat(clean_preds)
 
-    # Ricostruisci sempre all_faults
-    all_faults = []
-    for name, module in model.named_modules():
-        if isinstance(module, torch.nn.quantized.Linear):
-            weight, _ = module._packed_params._weight_bias()
-            shape = weight.shape
-            for idx in product(*[range(s) for s in shape]):
-                for bit in range(8):
-                    all_faults.append((name, idx, bit))
+    # --- MICRO-CHECK di impatto fault ---
+    injector = WeightFaultInjector(model)
+    xb, yb = next(iter(test_loader))
+    with torch.no_grad():
+        clean_logits = model(xb.to(device)).cpu()
 
-    # --- Gestione combinazioni: batch fornito oppure random come prima ---
-    if isinstance(fault_combinations_or_num, int):
-        faults_to_inject = fault_combinations_or_num
-        fault_combinations = _build_fault_list(num_faults_to_inject, faults_to_inject, model)
-    else:
-        fault_combinations = fault_combinations_or_num
-        faults_to_inject = len(fault_combinations)
-        print(f"Received {faults_to_inject} precomputed fault combinations for N={num_faults_to_inject}")
-
-    batch_str = f"_batch{batch_idx}" if batch_idx is not None else ""
-    output_path = f"top100_faults_progress_N{num_faults_to_inject}{batch_str}.txt"
-    output_path_final = f"top100_faults_N{num_faults_to_inject}{batch_str}.txt"
-
-    batch_size = 64
-    top_faults = []
-    total_failure_rate = 0.0
-    PERC_SAVE_INTERVAL = 10
-    save_points = set([int(faults_to_inject * x / 100) for x in range(PERC_SAVE_INTERVAL, 101, PERC_SAVE_INTERVAL)])
-    pbar = tqdm(total=faults_to_inject, desc=f"Sequential FI N={num_faults_to_inject}{batch_str}")
-
-    for inj_id, combo in enumerate(fault_combinations):
-        # combo può essere lista di indici (large N, from pkl) oppure tuple (small N, random)
-        if isinstance(combo[0], int):
-            fault_tuple_list = [all_faults[i] for i in combo]
-        else:
-            fault_tuple_list = combo
-
-        faults = [WeightFault(injection=inj_id, layer_name=layer, tensor_index=idx, bits=[bit], value=1)
-                  for (layer, idx, bit) in fault_tuple_list]
+    for (lname, idx, bit) in islice(_build_all_faults(model), 3):  # prova 3 fault
+        faults = [WeightFault(injection=0, layer_name=lname, tensor_index=idx, bits=[bit])]
+        injector.inject_faults(faults, 'bit-flip')
         with torch.no_grad():
-            injector = WeightFaultInjector(model)
-            injector.inject_faults(faults, fault_mode='bit-flip')
-            faulty_predictions = []
-            for data, _ in test_loader:
-                data = data.to(device)
-                outputs = model(data)
-                preds = torch.argmax(outputs, dim=1)
-                faulty_predictions.append(preds.cpu())
+            faulty_logits = model(xb.to(device)).cpu()
+        delta = (faulty_logits - clean_logits).abs().max().item()
+        print(f"[IMPACT] {lname}{idx} bit{bit}  max|Δ|={delta:.3e}")
+        injector.restore_golden()
+    # ------------------------------------
+
+
+    return model, test_loader, clean_preds
+
+
+def run_fault_injection(model, test_loader, clean_preds, N, MAX_FAULTS=4_000_000, save_dir="results_summary"):
+    t0 = time.time()
+    dataset = SETTINGS.DATASET_NAME
+    net_name = SETTINGS.NETWORK_NAME
+    bs = SETTINGS.BATCH_SIZE
+    device = torch.device("cpu")
+    save_path = os.path.join(save_dir, dataset, net_name, f"batch_{bs}", "minimal")
+    os.makedirs(save_path, exist_ok=True)
+
+    all_faults = _build_all_faults(model)
+    if len(all_faults) == 0:
+        raise RuntimeError("Nessun fault enumerato: verifica che il modello sia realmente quantizzato.")
+
+    # attenzione: math.comb può essere enorme; non materializzare in RAM
+    total_possible = math.comb(len(all_faults), N) if N <= len(all_faults) else 0
+
+    if total_possible and total_possible <= MAX_FAULTS:
+        print(f"[INFO] Campagna ESAUSTIVA (N={N}, {total_possible} combinazioni)...")
+        fault_combos = combinations(all_faults, N)  # generatore, NON castare a list
+    else:
+        print(f"[INFO] Campagna STATISTICA: eseguo {MAX_FAULTS} random injection su {total_possible:.2e} (N={N})")
+        fault_combos = islice(random_combination_generator(all_faults, N, SETTINGS.SEED), MAX_FAULTS)
+
+    injector = WeightFaultInjector(model)
+    top_100 = []
+    sum_fr = 0.0
+    n_injected = 0
+
+    for inj_id, combo in enumerate(tqdm(fault_combos, desc=f"N={N}"), 1):
+        faults = [WeightFault(injection=inj_id, layer_name=layer, tensor_index=idx, bits=[bit]) for layer, idx, bit in combo]
+        with torch.no_grad():
+            injector.inject_faults(faults, 'bit-flip')
+            preds = [torch.argmax(model(data.to(device)), 1).cpu() for data, _ in test_loader]
             injector.restore_golden()
-        faulty_predictions = torch.cat(faulty_predictions)
-        total = len(clean_predictions)
-        masked = (faulty_predictions == clean_predictions).sum().item()
-        critical = total - masked
-        accuracy = masked / total
-        failure_rate = critical / total
-        total_failure_rate += failure_rate
-        if len(top_faults) < 100:
-            heapq.heappush(top_faults, (failure_rate, inj_id, faults, accuracy))
+        faulty_preds = torch.cat(preds)
+        fr = 1 - (faulty_preds == clean_preds).sum().item() / len(clean_preds)
+        sum_fr += fr
+        n_injected += 1
+
+        if len(top_100) < 100:
+            heapq.heappush(top_100, (fr, inj_id, faults))
         else:
-            heapq.heappushpop(top_faults, (failure_rate, inj_id, faults, accuracy))
+            heapq.heappushpop(top_100, (fr, inj_id, faults))
 
-        if inj_id in save_points:
-            perc = int(100 * inj_id / faults_to_inject)
-            with open(output_path, 'a') as f:
-                f.write(f"\n---- Progress: {perc}% ({inj_id} / {faults_to_inject}) ----\n")
-                f.write(f"Top 100 most critical fault injections (NUM_FAULTS_TO_INJECT = {num_faults_to_inject})\n")
-                f.write(f"Partial average failure rate: {total_failure_rate / (inj_id+1):.4f}\n\n")
-                for rank, (failure_rate, inj_id_, faults, accuracy) in enumerate(sorted(top_faults, reverse=True), start=1):
-                    fault_desc = ", ".join([f"{fault.layer_name}[{fault.tensor_index}] bit {fault.bits[0]}" for fault in faults])
-                    f.write(f"#{rank:3d} | Injection {inj_id_:6d} | FR={failure_rate:.4f} | Acc={accuracy:.4f} | {fault_desc}\n")
-            print(f"\n[INFO] Salvato aggiornamento top100 al {perc}% in {output_path}")
+    avg_fr = sum_fr / n_injected if n_injected else 0.0
+    prefix = f"{dataset}_{net_name}_minimal_N{N}_batch0"
+    output_file = os.path.join(save_path, f"{prefix}_{dataset}.txt")
+    with open(output_file, "w") as f:
+        f.write(f"Top-100 worst injections  (N={N})\n")
+        f.write(f"Average FR: {avg_fr:.8f}  on {n_injected} injections\n\n")
+        for rank, (fr, inj_id, faults) in enumerate(sorted(top_100, reverse=True), 1):
+            desc = ", ".join(f"{ft.layer_name}[{ft.tensor_index}] bit{ft.bits[0]}" for ft in faults)
+            f.write(f"{rank:3d}) Inj {inj_id:6d} | FR={fr:.4f} | {desc}\n")
+    print(f"✓ salvato {output_file} – {(time.time()-t0)/60:.2f} min")
 
-        pbar.update(1)
-    pbar.close()
 
-    actual_injections = inj_id + 1
-    avg_failure_rate = total_failure_rate / actual_injections
-
-    if actual_injections < faults_to_inject:
-        print(f"[WARNING] Solo {actual_injections} combinazioni uniche generate su {faults_to_inject} richieste.")
-
-    with open(output_path, 'a') as f:
-        f.write(f"\n---- Progress: 100% ({actual_injections} / {faults_to_inject}) ----\n")
-        f.write(f"Top 100 most critical fault injections (NUM_FAULTS_TO_INJECT = {num_faults_to_inject})\n")
-        f.write(f"Final average failure rate: {avg_failure_rate:.4f} (based on {actual_injections} injections)\n\n")
-        for rank, (failure_rate, inj_id_, faults, accuracy) in enumerate(sorted(top_faults, reverse=True), start=1):
-            fault_desc = ", ".join([f"{fault.layer_name}[{fault.tensor_index}] bit {fault.bits[0]}" for fault in faults])
-            f.write(f"#{rank:3d} | Injection {inj_id_:6d} | FR={failure_rate:.4f} | Acc={accuracy:.4f} | {fault_desc}\n")
-
-    print(f"\nSaved top 100 critical faults (with progress) to {output_path}")
-
-    with open(output_path_final, 'w') as f:
-        f.write(f"Top 100 most critical fault injections (NUM_FAULTS_TO_INJECT = {num_faults_to_inject})\n")
-        f.write(f"Average failure rate: {avg_failure_rate:.4f} (based on {actual_injections} injections)\n\n")
-        for rank, (failure_rate, inj_id_, faults, accuracy) in enumerate(sorted(top_faults, reverse=True), start=1):
-            fault_desc = ", ".join([f"{fault.layer_name}[{fault.tensor_index}] bit {fault.bits[0]}" for fault in faults])
-            f.write(f"#{rank:3d} | Injection {inj_id_:6d} | FR={failure_rate:.4f} | Acc={accuracy:.4f} | {fault_desc}\n")
-
-    print(f"\nSaved top 100 critical faults to {output_path_final}")
-    duration = time.time() - start_time
-    print(f"\nAnalysis completed in {duration/60:.2f} minutes.")
+if __name__ == "__main__":
+    model, test_loader, clean_preds = build_and_quantize_once()
+    for N in [1, 2, 3, 4, 5, 10, 20, 50, 100, 200]:
+        run_fault_injection(model, test_loader, clean_preds, N)

@@ -84,14 +84,26 @@ def run_online_fault_injection():
     results = []
 
     for inj_id, group in tqdm(fault_groups, total=len(fault_groups), desc="Online FI"):
+        from collections import defaultdict
+
+        grouped_faults = defaultdict(list)
+
+        for _, row in group.iterrows():
+            layer = row['Layer']
+            tensor_index = eval(row['TensorIndex'])
+            bit = int(row['Bit'])
+            grouped_faults[(layer, tensor_index)].append(bit)
+
         faults = [
             WeightFault(
                 injection=inj_id,
-                layer_name=row['Layer'],
-                tensor_index=eval(row['TensorIndex']),
-                bits=[int(row['Bit'])]
-            ) for _, row in group.iterrows()
+                layer_name=layer,
+                tensor_index=tensor_index,
+                bits=bits
+            )
+            for (layer, tensor_index), bits in grouped_faults.items()
         ]
+
 
         masked = 0
         critical = 0
@@ -123,8 +135,9 @@ def run_online_fault_injection():
     os.makedirs(SETTINGS.FI_ANALYSIS_PATH, exist_ok=True)
     output_path = os.path.join(
         SETTINGS.FI_ANALYSIS_PATH,
-        f"online_summary_N{SETTINGS.NUM_FAULTS_TO_INJECT}.csv"
+        f"{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK_NAME}_online_summary_N{SETTINGS.NUM_FAULTS_TO_INJECT}.csv"
     )
+
     with open(output_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['Injection', 'masked', 'critical', 'total', 'accuracy', 'failure_rate'])
