@@ -27,8 +27,8 @@ DATASET available: 'BreastCancer'
 '''
 
 # network and dataset to use
-DATASET_NAME = 'Banknote'
-NETWORK_NAME = 'SimpleMLP'
+DATASET_NAME = 'DryBean'
+NETWORK_NAME = 'BeanMLP'
 NUM_EPOCHS = 100
 
 # Fault injection settings

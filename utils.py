@@ -26,7 +26,7 @@ from torchvision.models.efficientnet import Conv2dNormActivation
 from torchvision import transforms
 from torchvision.datasets import GTSRB, CIFAR10, CIFAR100, MNIST, ImageNet
 from torchvision.transforms.v2 import ToTensor,Resize,Compose,ColorJitter,RandomRotation,AugMix,GaussianBlur,RandomEqualize,RandomHorizontalFlip,RandomVerticalFlip
-
+import math
 import csv
 from tqdm import tqdm
 
@@ -170,6 +170,169 @@ def train_model(model, train_loader, val_loader=None, num_epochs=50, lr=0.001, d
     print(" Training completato.")
     return model
 
+# ---------- metriche ----------
+def _confusion_matrix(num_classes, y_true, y_pred):
+    cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for t, p in zip(y_true, y_pred):
+        cm[t, p] += 1
+    return cm
+
+@torch.no_grad()
+def _evaluate(model, data_loader, device='cpu', num_classes=None):
+    model.eval()
+    ys, ps = [], []
+    for x, y in data_loader:
+        x = x.to(device)
+        logits = model(x)
+        ys.append(y.view(-1).cpu().numpy())
+        ps.append(torch.argmax(logits, 1).cpu().numpy())
+    y_true = np.concatenate(ys)
+    y_pred = np.concatenate(ps)
+    if num_classes is None:
+        num_classes = int(y_true.max()) + 1
+    cm = _confusion_matrix(num_classes, y_true, y_pred)
+    acc = (y_true == y_pred).mean() * 100.0
+    # macro-F1
+    f1s = []
+    for k in range(num_classes):
+        TP = cm[k, k]
+        FP = cm[:, k].sum() - TP
+        FN = cm[k, :].sum() - TP
+        denom = 2*TP + FP + FN
+        f1s.append(0.0 if denom == 0 else 2*TP/denom)
+    macro_f1 = float(np.mean(f1s)) * 100.0
+    return acc, macro_f1, cm
+
+def _class_weights_from_loader(train_loader, num_classes):
+    counts = np.zeros(num_classes, dtype=np.int64)
+    for _, y in train_loader:
+        y = y.view(-1).cpu().numpy()
+        for c in np.unique(y):
+            counts[c] += (y == c).sum()
+    counts = np.clip(counts, 1, None)
+    inv = 1.0 / counts
+    return torch.tensor(inv / inv.mean(), dtype=torch.float32)
+
+# ---------- TRAIN + (opzionale) PTQ ----------
+def train_model_complete(
+    model,
+    train_loader,
+    val_loader=None,
+    num_epochs=150,
+    lr=1e-3,
+    weight_decay=1e-4,
+    label_smoothing=0.05,
+    warmup_epochs=5,
+    early_stop_patience=20,
+    grad_clip=1.0,
+    device='cpu',
+    save_path=None,
+    seed=123,
+    do_ptq=True,                 # <-- quantizza al termine
+    calib_loader=None,           # se None usa val_loader, altrimenti train_loader
+):
+    torch.manual_seed(seed); np.random.seed(seed)
+    model = model.to(device)
+    print(f"\n[Train] device={device} epochs={num_epochs} lr={lr} wd={weight_decay}")
+
+    # num classi
+    for _, ytmp in train_loader:
+        num_classes = int(ytmp.max().item()) + 1
+        break
+
+    # pesi di classe
+    class_w = _class_weights_from_loader(train_loader, num_classes).to(device)
+
+    # ottimizzatore / loss / scheduler
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    criterion = torch.nn.CrossEntropyLoss(weight=class_w, label_smoothing=label_smoothing)
+
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return (epoch + 1) / max(1, warmup_epochs)
+        prog = (epoch - warmup_epochs) / max(1, (num_epochs - warmup_epochs))
+        return 0.5 * (1.0 + math.cos(math.pi * prog))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+    best_score = -1.0
+    best_state = None
+    patience = 0
+
+    for epoch in range(num_epochs):
+        model.train()
+        tot_loss = 0.0; tot = 0; correct = 0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad()
+            logits = model(x)
+            loss = criterion(logits, y)
+            loss.backward()
+            if grad_clip and grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
+            tot_loss += loss.item() * y.size(0)
+            correct += (logits.argmax(1) == y).sum().item()
+            tot += y.size(0)
+
+        scheduler.step()
+        train_loss = tot_loss / max(1, tot)
+        train_acc = 100.0 * correct / max(1, tot)
+
+        if val_loader is not None:
+            val_acc, val_f1, _ = _evaluate(model, val_loader, device=device, num_classes=num_classes)
+            score = val_f1  # early stopping su macro-F1
+            improved = score > best_score
+            if improved:
+                best_score = score
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                patience = 0
+                if save_path:
+                    torch.save(best_state, save_path)
+            else:
+                patience += 1
+
+            print(f"Epoch {epoch+1:03d}/{num_epochs} | loss {train_loss:.4f} | "
+                  f"train_acc {train_acc:.2f}% | val_acc {val_acc:.2f}% | "
+                  f"val_macroF1 {val_f1:.2f}% | lr {scheduler.get_last_lr()[0]:.6f} "
+                  f"{'[*] best' if improved else ''}")
+
+            if patience >= early_stop_patience:
+                print(f"[EarlyStop] pazienza={early_stop_patience} a epoch {epoch+1}.")
+                break
+        else:
+            print(f"Epoch {epoch+1:03d}/{num_epochs} | loss {train_loss:.4f} | "
+                  f"train_acc {train_acc:.2f}% | lr {scheduler.get_last_lr()[0]:.6f}")
+
+    # ripristina best float
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        print("[Train] Best weights ripristinati (macro-F1 val).")
+    else:
+        print("[Train] Nessun best salvato (no val).")
+
+    # valutazione finale float
+    if val_loader is not None:
+        val_acc, val_f1, _ = _evaluate(model, val_loader, device=device, num_classes=num_classes)
+        print(f"[Float Best] val_acc={val_acc:.2f}%  val_macroF1={val_f1:.2f}%")
+
+    # ---------- PTQ ----------
+    if do_ptq and hasattr(model, "quantize_model"):
+        model.eval()
+        # scegli loader per calibrazione
+        calib = calib_loader if calib_loader is not None else (val_loader if val_loader is not None else train_loader)
+        try:
+            model.quantize_model(calib_loader=calib)
+            model._quantized_done = True  # flag per evitare doppia quantizzazione in main.py
+            print("[PTQ] Modello quantizzato (int8).")
+            if val_loader is not None:
+                q_acc, q_f1, _ = _evaluate(model, val_loader, device='cpu', num_classes=num_classes)
+                print(f"[Quantized] val_acc={q_acc:.2f}%  val_macroF1={q_f1:.2f}%")
+        except Exception as e:
+            print(f"[PTQ] Quantizzazione fallita: {e}")
+
+    print(" Training completato.")
+    return model  # restituisce quantizzato se do_ptq=True
+
 def get_network(network_name: str,
                 device: torch.device,
                 dataset_name: str,
@@ -243,7 +406,7 @@ def get_network(network_name: str,
 
     elif dataset_name == 'Wine':
             if network_name == 'WineMLP':
-                from dlModels.Iris.mlp import MiniMLP3
+                from dlModels.Wine.mlp import WineMLP
                 print('Loading WineMLP for Wine dataset...')
                 network = WineMLP()
                 network.to(device)

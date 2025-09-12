@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import SETTINGS
 
-DEBUG_FI = True   # False per silenziare
+DEBUG_FI = False   # False per silenziare
 
 class WeightFaultInjector:
     def __init__(self, network):
