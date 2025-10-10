@@ -1,11 +1,11 @@
-import torch.nn as nn
 import torch
-
+import torch.nn as nn
 from torch.ao.quantization import QuantStub, DeQuantStub
+from torch.ao.quantization import get_default_qconfig, prepare, convert  
 
-class SimpleMLP(nn.Module): # 36 pesi
+class SimpleMLP(nn.Module):  # 36 pesi
     def __init__(self):
-        super(SimpleMLP, self).__init__()
+        super().__init__()
         self.quant = QuantStub()
         self.fc1 = nn.Linear(4, 6)
         self.relu = nn.ReLU()
@@ -19,27 +19,25 @@ class SimpleMLP(nn.Module): # 36 pesi
         x = self.dequant(x)
         return x
 
+    @torch.inference_mode()
+    def quantize_model(self, calib_loader=None, max_calib_batches=None):
+        torch.backends.quantized.engine = "fbgemm"
+        self.eval(); self.cpu()
 
-    def quantize_model(self, calib_loader=None):
-        from torch.ao.quantization.observer import MinMaxObserver
+        self.qconfig = get_default_qconfig("fbgemm")
+        prepare(self, inplace=True)
 
-        # Imposta la qconfig per usare per_tensor_affine per i pesi
-        self.qconfig = torch.ao.quantization.QConfig(
-            activation=torch.ao.quantization.default_observer,
-            weight=MinMaxObserver.with_args(dtype=torch.qint8, qscheme=torch.per_tensor_affine)
-        )
-
-        # Prepara per la quantizzazione
-        torch.quantization.prepare(self, inplace=True)
-
-        # Calibrazione: passa alcuni batch per settare scale e zero_point
-        self.eval()
         if calib_loader is not None:
-            with torch.no_grad():
-                for i, (data, _) in enumerate(calib_loader):
-                    self(data)
-                    if i >= 1:
-                        break
+            for i, (xb, _) in enumerate(calib_loader):
+                self(xb.to("cpu").float())
+                if max_calib_batches is not None and (i + 1) >= max_calib_batches:
+                    break
 
-        # Converte il modello quantizzato
-        torch.quantization.convert(self, inplace=True)
+        convert(self, inplace=True)
+        setattr(self, "_quantized_done", True)
+
+        import torch.nn.quantized as nnq
+        for n, m in self.named_modules():
+            if isinstance(m, nnq.Linear):
+                print(f"[PTQ] {n}: qscheme={m.weight().qscheme()}")
+

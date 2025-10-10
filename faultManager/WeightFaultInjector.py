@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import SETTINGS
 
-DEBUG_FI = False   # False per silenziare
+DEBUG_FI = False   # metti True per vedere print dettagliati
 
 class WeightFaultInjector:
     def __init__(self, network):
@@ -40,6 +40,13 @@ class WeightFaultInjector:
             return
         raise RuntimeError("Impossibile impostare peso/bias quantizzati sul layer.")
 
+    @staticmethod
+    def _qscheme_name(qs):
+        if qs == torch.per_tensor_affine:      return "per_tensor_affine"
+        if qs == torch.per_channel_affine:     return "per_channel_affine"
+        if qs == torch.per_channel_symmetric:  return "per_channel_symmetric"
+        return str(qs)
+
     # -----------------------------------------------------------
 
     def inject_faults(self, faults, fault_mode='bit-flip'):
@@ -66,8 +73,7 @@ class WeightFaultInjector:
         with torch.no_grad():
             layer = dict(self.network.named_modules())[layer_name]
             wq, _ = self._get_qweight_and_bias(layer)
-            # int_repr() restituisce int8; lo salvo come int Python
-            golden_int = int(wq.int_repr()[tensor_index].item())
+            golden_int = int(wq.int_repr()[tensor_index].item())  # int8 -> int
             self.golden_values[(layer_name, tensor_index)] = golden_int
 
     def inject_bit_flip(self, layer_name: str, tensor_index: tuple, bits: list):
@@ -78,7 +84,7 @@ class WeightFaultInjector:
         self._modify_bit(layer_name, tensor_index, bits, mode="stuck", stuck_value=value)
 
     def _modify_bit(self, layer_name, tensor_index, bits, mode="flip", stuck_value=None):
-        bits = [b for b in bits if 0 <= b < 8]
+        bits = [int(b) for b in bits if 0 <= int(b) < 8]
         if not bits:
             return
 
@@ -87,22 +93,18 @@ class WeightFaultInjector:
                 layer = dict(self.network.named_modules())[layer_name]
                 wq, bias = self._get_qweight_and_bias(layer)
 
-                if wq.qscheme() != torch.per_tensor_affine:
-                    raise NotImplementedError("Gestito solo per per-tensor.")
+                qs = wq.qscheme()
 
-                scale = wq.q_scale()
-                zero_point = wq.q_zero_point()
-
-                # --- BEFORE: leggi lo stato originario ---
-                ir_before = wq.int_repr().clone()              # int8
+                # --- BEFORE comuni ---
+                ir_before = wq.int_repr().clone()            # int8 tensor
                 v_before_i8 = int(ir_before[tensor_index].item())
                 v_before_u8 = (v_before_i8 + 256) % 256
                 deq_before = wq.dequantize()[tensor_index].item()
 
-                # vista uint8 per XOR sicuro
+                # lavoro in uint8 per flip/AND/OR
                 ir_u8 = ir_before.view(torch.uint8)
 
-                # --- applica modifiche ---
+                # --- modifica i bit richiesti ---
                 v_new = v_before_u8
                 for bit in bits:
                     if mode == "flip":
@@ -113,20 +115,42 @@ class WeightFaultInjector:
                 ir_u8[tensor_index] = v_new
                 ir_after = ir_u8.view(torch.int8)
 
-                # ricostruisci quantized tensor e scrivi nel layer
-                q_new = torch._make_per_tensor_quantized_tensor(ir_after, scale, zero_point)
+                # --- ricostruzione quantized tensor in base allo schema ---
+                if qs == torch.per_tensor_affine:
+                    scale = wq.q_scale()
+                    zero_point = wq.q_zero_point()
+                    q_new = torch._make_per_tensor_quantized_tensor(ir_after, scale, zero_point)
+                    axis = None
+                    ch = None
+                    s_ch = float(scale)
+                    zp_ch = int(zero_point)
+                elif qs in (torch.per_channel_affine, torch.per_channel_symmetric):
+                    scales = wq.q_per_channel_scales()
+                    zero_points = wq.q_per_channel_zero_points()
+                    axis = int(wq.q_per_channel_axis())
+                    q_new = torch._make_per_channel_quantized_tensor(ir_after, scales, zero_points, axis)
+                    ch = int(tensor_index[axis])
+                    s_ch = float(scales[ch].item())
+                    zp_ch = int(zero_points[ch].item())
+                else:
+                    raise NotImplementedError(f"qscheme non supportato: {self._qscheme_name(qs)}")
+
+                # scrivi nel layer
                 self._set_qweight_and_bias(layer, q_new, bias)
 
                 if DEBUG_FI:
-                    # rileggo dal layer per confermare che ciò che ho scritto è quello che il layer vede
+                    # rileggo dal layer per confermare
                     wq_chk, _ = self._get_qweight_and_bias(layer)
                     ir_chk = wq_chk.int_repr()
                     deq_after = wq_chk.dequantize()[tensor_index].item()
                     v_after_i8 = int(ir_chk[tensor_index].item())
                     v_after_u8 = (v_after_i8 + 256) % 256
 
-                    print(f"[FI] {layer_name}{tensor_index} bits={bits}")
-                    print(f"     scale={scale:.6g} zp={zero_point}")
+                    hdr = f"[FI] {layer_name}{tensor_index} bits={bits}  scheme={self._qscheme_name(qs)}"
+                    if axis is not None:
+                        hdr += f" axis={axis} ch={ch}"
+                    print(hdr)
+                    print(f"     scale_ch={s_ch:.6g}  zp_ch={zp_ch}")
                     print(f"     INT8 before={v_before_i8:4d} (u8={v_before_u8:3d} bin={format(v_before_u8,'08b')})")
                     print(f"     INT8 after ={v_after_i8:4d} (u8={v_after_u8:3d} bin={format(v_after_u8,'08b')})")
                     print(f"     DEQ  before={deq_before:.7f}  after={deq_after:.7f}\n")
@@ -144,26 +168,41 @@ class WeightFaultInjector:
                 try:
                     layer = dict(self.network.named_modules())[layer_name]
                     wq, bias = self._get_qweight_and_bias(layer)
-                    if wq.qscheme() != torch.per_tensor_affine:
-                        raise NotImplementedError("Gestito solo per per-tensor.")
 
-                    scale = wq.q_scale()
-                    zero_point = wq.q_zero_point()
-
+                    qs = wq.qscheme()
                     ir = wq.int_repr().clone()
                     ir[tensor_index] = np.int8(golden_int).item()   # ripristino
 
-                    q_rest = torch._make_per_tensor_quantized_tensor(ir, scale, zero_point)
+                    if qs == torch.per_tensor_affine:
+                        q_rest = torch._make_per_tensor_quantized_tensor(ir, wq.q_scale(), wq.q_zero_point())
+                        axis = None
+                        ch = None
+                        s_ch = float(wq.q_scale())
+                        zp_ch = int(wq.q_zero_point())
+                    elif qs in (torch.per_channel_affine, torch.per_channel_symmetric):
+                        scales = wq.q_per_channel_scales()
+                        zero_points = wq.q_per_channel_zero_points()
+                        axis = int(wq.q_per_channel_axis())
+                        q_rest = torch._make_per_channel_quantized_tensor(ir, scales, zero_points, axis)
+                        ch = int(tensor_index[axis])
+                        s_ch = float(scales[ch].item())
+                        zp_ch = int(zero_points[ch].item())
+                    else:
+                        raise NotImplementedError(f"qscheme non supportato: {self._qscheme_name(qs)}")
+
                     self._set_qweight_and_bias(layer, q_rest, bias)
 
                     if DEBUG_FI:
                         wq_chk, _ = self._get_qweight_and_bias(layer)
                         v_chk = int(wq_chk.int_repr()[tensor_index].item())
                         ok = (v_chk == np.int8(golden_int).item())
-                        print(f"[RESTORE] {layer_name}{tensor_index} -> {v_chk} (ok={ok})")
+                        hdr = f"[RESTORE] {layer_name}{tensor_index} scheme={self._qscheme_name(qs)}"
+                        if axis is not None:
+                            hdr += f" axis={axis} ch={ch}"
+                        print(hdr)
+                        print(f"          scale_ch={s_ch:.6g}  zp_ch={zp_ch}  -> int8={v_chk} (ok={ok})")
 
                 except Exception as e:
                     print(f"ERROR restoring {layer_name}, index {tensor_index}: {e}")
 
         self.golden_values.clear()
-
