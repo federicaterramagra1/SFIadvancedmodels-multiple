@@ -4,12 +4,13 @@
 *.txt
 *.npy
 *.pkl
+*.png
 
 # Output folders
 output/
 results_summary/
 log/
-trained_models/
+#trained_models/
 output/
 log/
 Datasets/
