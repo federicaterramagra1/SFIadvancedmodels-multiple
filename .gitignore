@@ -179,7 +179,6 @@ cython_debug/
 output/
 results_summary/
 log/
-trained_models/
 
 # File CSV di analisi
 *.csv

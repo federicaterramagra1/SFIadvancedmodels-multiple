@@ -1435,3 +1435,36 @@ def select_random_faults(fault_list_path, num_faults_needed):
     sampled_faults = fault_df.sample(n=num_faults_needed, random_state=SETTINGS.SEED)
     sampled_faults.to_csv(fault_list_path.replace('.csv', '_sampled.csv'), index=False)
     print(f"Fault casualmente selezionati salvati in {fault_list_path.replace('.csv', '_sampled.csv')}")
+
+# ==== Quantized model I/O (senza toccare i .pth float) ====
+import os
+import torch
+
+def quant_ckpt_path(dataset_name: str, network_name: str, engine: str = "fbgemm") -> str:
+    return f"./trained_models_quantized/{dataset_name}_{network_name}_quant_{engine}.pth"
+
+def load_quantized_model(dataset_name: str, network_name: str, device="cpu", engine: str = "fbgemm"):
+    """
+    Ritorna (model, path) se esiste il checkpoint quantizzato; altrimenti (None, path_atteso).
+    """
+    path = quant_ckpt_path(dataset_name, network_name, engine)
+    if os.path.exists(path):
+        m = torch.load(path, map_location=device)
+        m.to(device).eval()
+        # segnale interno per saltare la PTQ
+        try:
+            setattr(m, "_quantized_done", True)
+        except Exception:
+            pass
+        return m, path
+    return None, path
+
+def save_quantized_model(model: torch.nn.Module, dataset_name: str, network_name: str, engine: str = "fbgemm") -> str:
+    """
+    Salva l'OGGETTO modello quantizzato (eager), così preservi scale/zero-point delle attivazioni.
+    """
+    path = quant_ckpt_path(dataset_name, network_name, engine)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    model.to("cpu").eval()
+    torch.save(model, path)
+    return path

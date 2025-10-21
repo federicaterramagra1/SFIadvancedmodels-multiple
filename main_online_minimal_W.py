@@ -14,7 +14,8 @@ from tqdm import tqdm
 
 from faultManager.WeightFault import WeightFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-from utils import get_loader, load_from_dict, get_network
+from utils import get_loader, load_from_dict, get_network, load_quantized_model, save_quantized_model
+
 import SETTINGS
 
 
@@ -128,37 +129,45 @@ def choose_n_for_ci_normal(p_hat, eps=0.005, conf=0.95):
 # ============================= Build, quantize, clean pass =============================
 
 def build_and_quantize_once():
-    # Enforce CPU quantization path (x86)
+    # CPU quant path (x86)
     torch.backends.quantized.engine = "fbgemm"
     device = torch.device("cpu")
 
-    # 1) Build model + load ckpt (se presente)
-    model = get_network(SETTINGS.NETWORK_NAME, device, SETTINGS.DATASET_NAME)
-    model.to(device).eval()
-    ckpt = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK_NAME}_trained.pth"
-    if os.path.exists(ckpt):
-        load_from_dict(model, device, ckpt)
-        print("modello caricato")
-    else:
-        print(f"checkpoint non trovato: {ckpt} (proseguo senza)")
+    ds_name = getattr(SETTINGS, "DATASET_NAME", getattr(SETTINGS, "DATASET", ""))
+    net_name = getattr(SETTINGS, "NETWORK_NAME", getattr(SETTINGS, "NETWORK", ""))
 
-    # 2) Loader (train per calibrazione quantize, test per inferenza)
+    # Loader (test sempre; train solo se devo calibrare)
     train_loader, _, test_loader = get_loader(
-        dataset_name=SETTINGS.DATASET_NAME,
-        batch_size=SETTINGS.BATCH_SIZE,
-        network_name=SETTINGS.NETWORK_NAME
+        dataset_name=ds_name,
+        batch_size=getattr(SETTINGS, "BATCH_SIZE", 64),
+        network_name=net_name
     )
 
-    # 3) Quantize (se supportato)
-    if hasattr(model, "quantize_model"):
-        model.to(device)
-        model.quantize_model(calib_loader=train_loader)
-        model.eval()
-        print("quantizzazione completata")
+    # 1) Prova a caricare il quantizzato
+    qmodel, qpath = load_quantized_model(ds_name, net_name, device="cpu", engine="fbgemm")
+    if qmodel is not None:
+        model = qmodel
+        print(f"[PTQ] Quantized model caricato: {qpath}")
     else:
-        print("modello non quantizzabile (salto quantizzazione)")
+        # 2) Float + ckpt + PTQ + save
+        model = get_network(net_name, device, ds_name)
+        model.to(device).eval()
+        ckpt = f"./trained_models/{ds_name}_{net_name}_trained.pth"
+        if os.path.exists(ckpt):
+            load_from_dict(model, device, ckpt)
+            print("[CKPT] modello float caricato")
+        else:
+            print(f"[WARN] checkpoint non trovato: {ckpt} (proseguo senza)")
 
-    # 4) Clean predictions AFTER quantization: lista per-batch
+        if hasattr(model, "quantize_model"):
+            model.quantize_model(calib_loader=train_loader)
+            model.eval()
+            qsave = save_quantized_model(model, ds_name, net_name, engine="fbgemm")
+            print(f"[PTQ] quantizzazione completata (CPU) e salvata: {qsave}")
+        else:
+            print("[PTQ] modello non quantizzabile – salto")
+
+    # Predizioni clean post-PTQ
     clean_by_batch = []
     with torch.inference_mode():
         for xb, _ in test_loader:
@@ -166,45 +175,11 @@ def build_and_quantize_once():
             logits = model(xb)
             clean_by_batch.append(torch.argmax(logits, dim=1).cpu())
 
-    # 4b) Baseline distribuzione predizioni (per bias)
-    clean_flat = torch.cat(clean_by_batch, dim=0)
+    clean_flat = torch.cat(clean_by_batch, dim=0) if len(clean_by_batch) else torch.tensor([], dtype=torch.long)
     num_classes = int(clean_flat.max().item()) + 1 if clean_flat.numel() > 0 else 2
-    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes)
+    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes) if clean_flat.numel() > 0 else np.zeros(2, dtype=int)
     baseline_dist = baseline_hist / max(1, baseline_hist.sum())
     print(f"[BASELINE] pred dist = {baseline_dist}")
-
-    # 5) Micro-check: 3 injection singole su un batch, con restore garantito
-    injector = WeightFaultInjector(model)
-    preview = list(islice(_build_all_faults(model, as_list=False), 3))
-    if len(preview) == 0:
-        raise RuntimeError("Nessun fault enumerato: verifica che il modello sia realmente quantizzato.")
-
-    _test_iter = iter(test_loader)
-    try:
-        xb_check, _ = next(_test_iter)
-    except StopIteration:
-        raise RuntimeError("Test loader vuoto: impossibile eseguire il micro-check.")
-
-    xb_check = xb_check.to(device)
-    with torch.inference_mode():
-        clean_logits = model(xb_check).detach().cpu()
-
-    for (lname, idx, bit) in preview:
-        faults = [WeightFault(injection=0, layer_name=lname, tensor_index=idx, bits=[bit])]
-        try:
-            injector.inject_faults(faults, 'bit-flip')
-            with torch.inference_mode():
-                faulty_logits = model(xb_check).detach().cpu()
-            max_delta = (faulty_logits - clean_logits).abs().max().item()
-            print(f"[IMPACT] {lname}{idx} bit{bit}  max|Δ|={max_delta:.3e}")
-        finally:
-            injector.restore_golden()
-
-    # 6) Conteggio siti di fault
-    all_faults = _build_all_faults(model, as_list=True)
-    print(f"Siti single-bit totali: {len(all_faults)}")
-    if len(all_faults) == 0:
-        raise RuntimeError("Nessun fault enumerato: verifica quantizzazione e layer target.")
 
     return model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes
 
@@ -666,9 +641,9 @@ if __name__ == "__main__":
     model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes = build_and_quantize_once()
 
     # Sweep: STAT con CI
-    for N in [ #1, 2,3,4,5, 6, 7, 8, 9, 10, 50, 100, 150, 
+    for N in [ 1, 2,3,4,5, 6, 7, 8, 9, 10, 50, 100, 150, 
              #384, 768, 960, 1104, 1408, 1728, 1984, 2048, 2208
-             576
+             #576
              #384, 768, 960, 1104, 1408,
                  #1728, 1984, 2048, 2208 
                 # 144, 200, 287, 288  

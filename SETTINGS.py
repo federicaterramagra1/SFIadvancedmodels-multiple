@@ -3,8 +3,8 @@ import torch
 # ==============================
 # ESPERIMENTO: scegli dataset & rete
 # ==============================
-DATASET_NAME = 'Wine'      # es.:  'Banknote' | 'Wine' | 'DryBean' | 
-NETWORK_NAME = 'WineMLP'   # es.: 'SimpleMLP' | 'WineMLP' | 'BeanMLP' | 
+DATASET_NAME = 'DryBean'      # es.:  'Banknote' | 'Wine' | 'DryBean' | 
+NETWORK_NAME = 'BeanMLP'   # es.: 'SimpleMLP' | 'WineMLP' | 'BeanMLP' | 
 NUM_EPOCHS = 200
 
 # Alias usati dal codice

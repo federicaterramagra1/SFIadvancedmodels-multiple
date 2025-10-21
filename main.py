@@ -15,7 +15,8 @@ from utils import (
     csv_summary, save_global_metrics_summary_txt,
     train_model_complete, train_model,
     _init_clean_output, output_definition_parallel, output_definition_parallel_chunked,
-    csv_summary_parallel, csv_summary_parallel_chunked
+    # NEW: I/O del modello quantizzato (NON tocca i .pth float)
+    load_quantized_model, save_quantized_model
 )
 
 torch.backends.quantized.engine = "fbgemm"
@@ -48,6 +49,15 @@ def main():
         print(f"Network structure:\n{network}")
         print_layer_dimensions(network)
 
+        # >>> NEW: se esiste un checkpoint QUANTIZZATO, usalo e salta la PTQ
+        quant_loaded = False
+        qmodel, qpath = load_quantized_model(SETTINGS.DATASET, SETTINGS.NETWORK, device="cpu", engine="fbgemm")
+        if qmodel is not None:
+            network = qmodel
+            device = "cpu"
+            quant_loaded = True
+            print(f"[PTQ] Quantized model caricato da: {qpath}")
+
         # -------------------- Loader (train/val/test) --------------------
         train_loader, val_loader, test_loader = get_loader(
             network_name=SETTINGS.NETWORK,
@@ -56,49 +66,55 @@ def main():
         )
         test_loader_for_eval = test_loader  # usiamo sempre il test per le valutazioni
 
-        # -------------------- Valutazione pre-training --------------------
-        print("Valutazione PRIMA del training/quantizzazione (test set):")
+        # -------------------- Valutazione pre-training/quantizzazione --------------------
+        if not quant_loaded:
+            print("Valutazione PRIMA del training/quantizzazione (test set):")
+        else:
+            print("Valutazione del modello QUANTIZZATO caricato (test set):")
         clean_inference(network, test_loader_for_eval, device, SETTINGS.NETWORK)
 
-        # -------------------- Training / Load pesi --------------------
-        model_save_path = f"./trained_models/{SETTINGS.DATASET}_{SETTINGS.NETWORK}_trained.pth"
-        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+        # -------------------- Training / Load pesi FLOAT --------------------
+        # (Se ho già caricato il quantizzato, NON tocco i .pth float)
+        if not quant_loaded:
+            model_save_path = f"./trained_models/{SETTINGS.DATASET}_{SETTINGS.NETWORK}_trained.pth"
+            os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
-        if os.path.exists(model_save_path):
-            print(f"[CKPT] Trovato {model_save_path}. Carico pesi FLOAT...")
-            load_from_dict(network, device, model_save_path)
-        else:
-            print("[Train] Avvio training...")
-            if getattr(SETTINGS, "USE_ADVANCED_TRAIN", False):
-                # Training "completo" ma SENZA PTQ qui (uniformiamo la PTQ fuori)
-                network = train_model_complete(
-                    model=network,
-                    train_loader=train_loader,
-                    val_loader=val_loader,
-                    num_epochs=getattr(SETTINGS, "NUM_EPOCHS", 150),
-                    lr=getattr(SETTINGS, "LR_MAIN", 1e-3),
-                    early_stop_patience=getattr(SETTINGS, "EARLY_STOP_PATIENCE", 20),
-                    device=device,
-                    save_path=model_save_path,
-                    do_ptq=False,             # <- PTQ uniforme sotto
-                    calib_loader=None,
-                    USE_CLASS_WEIGHTS=getattr(SETTINGS, "USE_CLASS_WEIGHTS", True),
-                    REFIT_TRAINVAL=getattr(SETTINGS, "DO_REFIT", False),
-                    REFIT_EPOCHS=getattr(SETTINGS, "REFIT_EPOCHS", 0),
-                )
+            if os.path.exists(model_save_path):
+                print(f"[CKPT] Trovato {model_save_path}. Carico pesi FLOAT...")
+                load_from_dict(network, device, model_save_path)
             else:
-                network = train_model(
-                    model=network,
-                    train_loader=train_loader,
-                    val_loader=val_loader,
-                    num_epochs=getattr(SETTINGS, "NUM_EPOCHS", 50),
-                    lr=getattr(SETTINGS, "LR_MAIN", 1e-3),
-                    device=device,
-                    save_path=model_save_path
-                )
+                print("[Train] Avvio training...")
+                if getattr(SETTINGS, "USE_ADVANCED_TRAIN", False):
+                    # Training "completo" ma SENZA PTQ qui (PTQ uniforme sotto)
+                    network = train_model_complete(
+                        model=network,
+                        train_loader=train_loader,
+                        val_loader=val_loader,
+                        num_epochs=getattr(SETTINGS, "NUM_EPOCHS", 150),
+                        lr=getattr(SETTINGS, "LR_MAIN", 1e-3),
+                        early_stop_patience=getattr(SETTINGS, "EARLY_STOP_PATIENCE", 20),
+                        device=device,
+                        save_path=model_save_path,
+                        do_ptq=False,             # <- PTQ uniforme sotto
+                        calib_loader=None,
+                        USE_CLASS_WEIGHTS=getattr(SETTINGS, "USE_CLASS_WEIGHTS", True),
+                        REFIT_TRAINVAL=getattr(SETTINGS, "DO_REFIT", False),
+                        REFIT_EPOCHS=getattr(SETTINGS, "REFIT_EPOCHS", 0),
+                    )
+                else:
+                    network = train_model(
+                        model=network,
+                        train_loader=train_loader,
+                        val_loader=val_loader,
+                        num_epochs=getattr(SETTINGS, "NUM_EPOCHS", 50),
+                        lr=getattr(SETTINGS, "LR_MAIN", 1e-3),
+                        device=device,
+                        save_path=model_save_path
+                    )
 
         # -------------------- PTQ uniforme (se abilitata) --------------------
-        if getattr(SETTINGS, "DO_PTQ", True) and hasattr(network, "quantize_model") and not getattr(network, "_quantized_done", False):
+        # Esegue PTQ SOLO se non ho caricato un quantizzato già pronto.
+        if (not quant_loaded) and getattr(SETTINGS, "DO_PTQ", True) and hasattr(network, "quantize_model") and not getattr(network, "_quantized_done", False):
             print("[PTQ] Applying 8-bit static quantization to the network...")
             calib_split = getattr(SETTINGS, "CALIB_SPLIT", "train")
             calib_loader = train_loader if calib_split == "train" else (val_loader or train_loader)
@@ -110,12 +126,14 @@ def main():
                 if maybe_new is not None:
                     network = maybe_new
                 setattr(network, "_quantized_done", True)
-                print("[PTQ] Quantization completed. Model is now on CPU.")
                 device = "cpu"
+                # >>> NEW: salva il modello quantizzato per riuso perfetto alle prossime run
+                qpath = save_quantized_model(network, SETTINGS.DATASET, SETTINGS.NETWORK, engine="fbgemm")
+                print("[PTQ] Quantizzazione completata e salvata in:", qpath)
             except Exception as e:
                 print(f"[PTQ] Quantizzazione fallita: {e}")
         else:
-            # se non PTQ, restiamo sul device originale
+            # se non PTQ o quant già caricato, assicurati che sia sul device scelto
             network.to(device)
 
         # -------------------- Valutazione post-training/quantizzazione --------------------
@@ -192,10 +210,9 @@ def main():
 
     if getattr(SETTINGS, "FI_ANALYSIS_SUMMARY", False):
         print("Generating CSV summary")
-        # scegli qui la versione che preferisci
-        csv_summary()  # semplice
-        # csv_summary_parallel(n_workers=8)                 # oppure
-        # csv_summary_parallel_chunked(n_workers=8)         # per fault list giganti
+        csv_summary()
+        # csv_summary_parallel(n_workers=8)
+        # csv_summary_parallel_chunked(n_workers=8)
         print("CSV summary generated")
         save_global_metrics_summary_txt()
 

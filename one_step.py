@@ -10,7 +10,7 @@ One Step EP (non-iterativo) – calcolo *automatico* dei campioni, **con FPC**.
    n_fpc = ceil( N * z^2 p0(1-p0) / ( (N-1)*e^2 + z^2 p0(1-p0) ) ), clampato a [1, N],
    n_to_draw = n_fpc.
 - Esegue esattamente n_to_draw iniezioni (combinazioni uniche, senza duplicati) e stampa:
-   K, N, (N-1)/N, f_exhaustive (opzionale), n_inf, n_fpc, f_rate (EP), errore (EP, con FPC), n_used.
+   K, N, (N-1)/N, f_exhaustive (opzionale), n_inf, n_fpc, f-rate (EP), errore (EP, con FPC), n_used.
 
 NOTE:
 - FPC (“finite population correction”) rende il one-step **comparabile** con la tua tabella,
@@ -31,9 +31,11 @@ from tqdm import tqdm
 
 from faultManager.WeightFault import WeightFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-from utils import get_loader, load_from_dict, get_network
+from utils import (
+    get_loader, load_from_dict, get_network,
+    load_quantized_model, save_quantized_model  # << NEW
+)
 import SETTINGS
-
 
 # ---------- stampa C(n,k) in notazione scientifica ----------
 def sci_comb(n: int, k: int) -> str:
@@ -48,7 +50,6 @@ def sci_comb(n: int, k: int) -> str:
     mant = 10 ** (log10_val - exp)
     return f"{mant:.3f}e+{exp:d}"
 
-
 # ---------- helper per ottenere i pesi quantizzati ----------
 def _get_quant_weight(module):
     if hasattr(module, "weight"):
@@ -60,7 +61,6 @@ def _get_quant_weight(module):
         w, _ = module._packed_params._weight_bias()
         return w
     raise RuntimeError("Impossibile ottenere il peso quantizzato dal modulo.")
-
 
 def build_fault_sites(model, as_list=True):
     def _iter():
@@ -76,7 +76,6 @@ def build_fault_sites(model, as_list=True):
                         yield (name, idx, bit)
     return list(_iter()) if as_list else _iter()
 
-
 # ---------- EP planning (CON FPC) ----------
 def plan_n_one_step(z: float, e: float, p0: float, N_pop: int) -> Tuple[int, int]:
     """
@@ -84,12 +83,11 @@ def plan_n_one_step(z: float, e: float, p0: float, N_pop: int) -> Tuple[int, int
       n_inf  = ceil(z^2 p0(1-p0) / e^2)
       n_fpc  = ceil( N * z^2 p0(1-p0) / ( (N-1)*e^2 + z^2 p0(1-p0) ) )
     """
-    A = (z*z*p0*(1.0-p0))  # = 0.9604 con z=1.96, p0=0.5
+    A = (z*z*p0*(1.0-p0))
     n_inf = max(1, math.ceil(A / (e*e)))
     denom = (e*e)*(N_pop - 1.0) + A
     n_fpc = max(1, min(N_pop, int(math.ceil((N_pop * A) / denom))))
     return n_inf, n_fpc
-
 
 def halfwidth_normal_fpc(p_hat: float, n: int, z: float, N_pop: int) -> float:
     """
@@ -102,7 +100,6 @@ def halfwidth_normal_fpc(p_hat: float, n: int, z: float, N_pop: int) -> float:
     else:
         fpc = 1.0
     return base * fpc
-
 
 # ---------- sampler di combinazioni uniche ----------
 def sample_unique_combos(pool: List[tuple], K: int, n_needed: int, seed: int) -> Iterable[Tuple[tuple, ...]]:
@@ -136,36 +133,49 @@ def sample_unique_combos(pool: List[tuple], K: int, n_needed: int, seed: int) ->
             seen.add(idxs)
             yield tuple(pool[i] for i in idxs)
 
-
 # ---------- build + quantize + clean ----------
 def build_and_quantize_once():
     torch.backends.quantized.engine = "fbgemm"
     device = torch.device("cpu")
 
-    print(f"Loading network {SETTINGS.NETWORK_NAME} for {SETTINGS.DATASET_NAME} ...")
-    model = get_network(SETTINGS.NETWORK_NAME, device, SETTINGS.DATASET_NAME)
-    model.to(device).eval()
-    ckpt = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK_NAME}_trained.pth"
-    if os.path.exists(ckpt):
-        load_from_dict(model, device, ckpt)
-        print("modello caricato")
-    else:
-        print(f"checkpoint non trovato: {ckpt} (proseguo senza)")
+    ds_name = getattr(SETTINGS, "DATASET_NAME", getattr(SETTINGS, "DATASET", ""))
+    net_name = getattr(SETTINGS, "NETWORK_NAME", getattr(SETTINGS, "NETWORK", ""))
 
-    print(f"Loading {SETTINGS.DATASET_NAME} dataset...")
+    print(f"Loading network {net_name} for {ds_name} ...")
+
+    # Prepara i loader (test sempre; train solo se serve calibrare)
+    print(f"Loading {ds_name} dataset...")
     train_loader, _, test_loader = get_loader(
-        dataset_name=SETTINGS.DATASET_NAME,
-        batch_size=SETTINGS.BATCH_SIZE,
-        network_name=SETTINGS.NETWORK_NAME
+        dataset_name=ds_name,
+        batch_size=getattr(SETTINGS, "BATCH_SIZE", 64),
+        network_name=net_name
     )
 
-    if hasattr(model, "quantize_model"):
-        model.quantize_model(calib_loader=train_loader)
-        model.eval()
-        print("quantizzazione completata")
+    # 1) Prova a caricare il modello quantizzato già salvato
+    qmodel, qpath = load_quantized_model(ds_name, net_name, device="cpu", engine="fbgemm")
+    if qmodel is not None:
+        model = qmodel
+        print(f"[PTQ] Quantized model caricato: {qpath}")
     else:
-        print("modello non quantizzabile (salto quantizzazione)")
+        # 2) Fallback: costruisci float, carica ckpt e fai PTQ UNA volta, poi salva
+        model = get_network(net_name, device, ds_name)
+        model.to(device).eval()
+        ckpt = f"./trained_models/{ds_name}_{net_name}_trained.pth"
+        if os.path.exists(ckpt):
+            load_from_dict(model, device, ckpt)
+            print("modello float caricato")
+        else:
+            print(f"checkpoint non trovato: {ckpt} (proseguo senza)")
 
+        if hasattr(model, "quantize_model"):
+            model.quantize_model(calib_loader=train_loader)
+            model.eval()
+            qsave = save_quantized_model(model, ds_name, net_name, engine="fbgemm")
+            print(f"[PTQ] quantizzazione completata e salvata in: {qsave}")
+        else:
+            print("modello non quantizzabile (salto quantizzazione)")
+
+    # Clean predictions (post-PTQ) per batch
     clean_by_batch = []
     with torch.inference_mode():
         for xb, _ in test_loader:
@@ -173,13 +183,12 @@ def build_and_quantize_once():
             logits = model(xb)
             clean_by_batch.append(torch.argmax(logits, dim=1).cpu())
 
-    clean_flat = torch.cat(clean_by_batch, dim=0)
+    clean_flat = torch.cat(clean_by_batch, dim=0) if len(clean_by_batch) else torch.tensor([], dtype=torch.long)
     num_classes = int(clean_flat.max().item()) + 1 if clean_flat.numel() > 0 else 2
-    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes)
+    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes) if clean_flat.numel() > 0 else np.zeros(2, dtype=int)
     baseline_dist = baseline_hist / max(1, baseline_hist.sum())
 
     return model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes
-
 
 # ---------- valutazione di una combinazione ----------
 def evaluate_combo(model, device, test_loader, clean_by_batch, injector,
@@ -199,7 +208,6 @@ def evaluate_combo(model, device, test_loader, clean_by_batch, injector,
     finally:
         injector.restore_golden()
     return mismatches / float(total_samples)
-
 
 # ---------- runner one-step EP (con FPC) ----------
 def run_one_step_ep_for_K(model, device, test_loader, clean_by_batch,
@@ -238,7 +246,6 @@ def run_one_step_ep_for_K(model, device, test_loader, clean_by_batch,
         n_used=n_to_draw
     )
 
-
 # ---------- (opzionale) esaustiva se N piccolo ----------
 def maybe_exhaustive_f(model, device, test_loader, clean_by_batch,
                        all_faults, K, exhaustive_cap: int) -> Optional[float]:
@@ -254,7 +261,6 @@ def maybe_exhaustive_f(model, device, test_loader, clean_by_batch,
                                  combo, inj_id, total_samples)
     return sum_fr / N_pop if N_pop > 0 else 0.0
 
-
 # ---------- main ----------
 def main():
     ap = argparse.ArgumentParser(description="One Step EP – CON FPC")
@@ -267,7 +273,7 @@ def main():
     ap.add_argument("--exhaustive-cap", type=int, default=0, help="Se >0 e N<=cap, calcola anche f_exhaustive")
     args = ap.parse_args()
 
-    # build + clean
+    # build + clean (riusa il modello quantizzato se esiste)
     model, device, test_loader, clean_by_batch, _, _, _ = build_and_quantize_once()
 
     # siti di fault (M)
