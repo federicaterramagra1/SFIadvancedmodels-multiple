@@ -3,8 +3,8 @@ import torch
 # ==============================
 # ESPERIMENTO: scegli dataset & rete
 # ==============================
-DATASET_NAME = 'DryBean'      # es.:  'Banknote' | 'Wine' | 'DryBean' | 
-NETWORK_NAME = 'BeanMLP'   # es.: 'SimpleMLP' | 'WineMLP' | 'BeanMLP' | 
+DATASET_NAME = 'Wine'      # es.:  'Banknote' | 'Wine' | 'DryBean' | 
+NETWORK_NAME = 'WineMLP'   # es.: 'SimpleMLP' | 'WineMLP' | 'BeanMLP' | 
 NUM_EPOCHS = 200
 
 # Alias usati dal codice
@@ -24,7 +24,7 @@ FI_ANALYSIS_SUMMARY    = True  # sintesi -> *_summary.csv + .txt
 # PARAMETRI FAULT INJECTION
 # ==============================
 SEED = 42
-NUM_FAULTS_TO_INJECT = 1        # numero di bit flip simultanei per iniezione
+NUM_FAULTS_TO_INJECT = 1       # numero di bit flip simultanei per iniezione
 FAULTS_TO_INJECT     = -1       # -1 = esaustiva sulla fault list; >0 = campiona N iniezioni
 FAULT_MODEL          = 'bit-flip'  # 'stuck-at_params' | 'bit-flip' 
 STUCK_VALUE          = 1

@@ -37,7 +37,6 @@ matplotlib.use("Agg")  # backend headless
 import matplotlib.pyplot as plt
 
 
-
 # ============================= Logger =============================
 
 class DualLogger:
@@ -45,7 +44,9 @@ class DualLogger:
         self.save_path = save_path
         self.fh = None
         if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            d = os.path.dirname(save_path)
+            if d:
+                os.makedirs(d, exist_ok=True)
             self.fh = open(save_path, "w", encoding="utf-8")
 
     def log(self, msg: str):
@@ -136,6 +137,12 @@ def build_and_quantize(logger: DualLogger):
     else:
         logger.log("[WARN] modello non quantizzabile: procedo senza quantizzazione")
 
+    # Numero classi dai logits (robusto anche se la baseline non usa tutte le classi)
+    with torch.inference_mode():
+        xb0, _ = next(iter(test_loader))
+        c_out = model(xb0.to(device)).shape[1]
+    num_classes = int(c_out)
+
     # Baseline clean predictions (salvate per-batch per FRcrit)
     clean_by_batch = []
     with torch.inference_mode():
@@ -146,8 +153,7 @@ def build_and_quantize(logger: DualLogger):
 
     # Distribuzione baseline
     clean_flat = torch.cat(clean_by_batch, dim=0) if len(clean_by_batch) > 0 else torch.tensor([], dtype=torch.long)
-    num_classes = int(clean_flat.max().item()) + 1 if clean_flat.numel() > 0 else 2
-    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes) if clean_flat.numel() > 0 else np.zeros(2, dtype=int)
+    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes) if clean_flat.numel() > 0 else np.zeros(num_classes, dtype=int)
     baseline_dist = baseline_hist / max(1, baseline_hist.sum())
     logger.log(f"[BASELINE] pred dist = {baseline_dist.tolist()}")
 
@@ -174,6 +180,7 @@ def eval_frcrit(model, device, test_loader, clean_by_batch, num_classes):
             xb = xb.to(device)
             logits_f = model(xb)
             pred_f = torch.argmax(logits_f, dim=1).cpu().numpy()
+            pred_f = np.clip(pred_f, 0, num_classes - 1)  # safety: evita out-of-bounds
 
             clean_pred = clean_by_batch[batch_i].numpy()
             mismatches += int((pred_f != clean_pred).sum())
@@ -219,6 +226,7 @@ def _negate_qtensor_preserve_qparams(wq: torch.Tensor) -> torch.Tensor:
 def _set_quantized_weight(module: torch.nn.Module, new_wq: torch.Tensor):
     """
     Imposta il peso quantizzato new_wq nel modulo quantized.
+    Richiede CPU e dtype coerenti con il prepack.
     """
     if not (hasattr(module, "_packed_params") and hasattr(module._packed_params, "_weight_bias")):
         raise RuntimeError("Modulo quantizzato senza _packed_params: impossibile sostituire il peso.")
@@ -302,15 +310,14 @@ def _int_hist_stats_from_qtensor(wq: torch.Tensor):
     if wq.dtype == torch.qint8:
         # int_repr in [-128,127] -> mappo a [0,255] e FLATTEN
         arr = ir.astype(np.int16, copy=False)
-        idx = (arr + 128).astype(np.int64, copy=False).ravel()  # <-- FLATTEN 1-D
+        idx = (arr + 128).astype(np.int64, copy=False).ravel()
     elif wq.dtype == torch.quint8:
         # int_repr già in [0,255] -> FLATTEN
         arr = ir.astype(np.int16, copy=False)
-        idx = arr.astype(np.int64, copy=False).ravel()          # <-- FLATTEN 1-D
+        idx = arr.astype(np.int64, copy=False).ravel()
     else:
         raise ValueError(f"dtype quantizzato non gestito: {wq.dtype}")
 
-    # Ora idx è 1-D di interi non negativi
     hist = np.bincount(idx, minlength=256)
     n = int(idx.size)
 
@@ -387,6 +394,7 @@ def _plot_overlay(hists_by_mode: dict, title: str, outfile: str):
     hists_by_mode: {mode: np.array shape (256,)} già normalizzati o conteggi
     Plotta overlay (line plot) su 256 bin.
     """
+    os.makedirs(os.path.dirname(os.path.abspath(outfile)) or ".", exist_ok=True)
     x = np.arange(256)
     plt.figure(figsize=(9, 4))
     for mode, h in hists_by_mode.items():
@@ -403,6 +411,7 @@ def _plot_overlay(hists_by_mode: dict, title: str, outfile: str):
     plt.close()
 
 def _plot_global_std_bars(std_by_mode: dict, title: str, outfile: str):
+    os.makedirs(os.path.dirname(os.path.abspath(outfile)) or ".", exist_ok=True)
     modes = sorted(std_by_mode.keys())
     vals = [std_by_mode[m] for m in modes]
     plt.figure(figsize=(5, 4))
@@ -419,6 +428,8 @@ def _make_plots_from_rows(weight_rows_all: list, outdir: str):
       - overlay istogrammi per layer (incl. __global__)
       - bar chart float_std globali
     """
+    os.makedirs(outdir, exist_ok=True)
+
     # indicizza: (dataset, network, layer) -> {mode: (hist, float_std)}
     table = {}
     for r in weight_rows_all:
@@ -527,6 +538,7 @@ def _plot_int8_hist_bars(h_golden, h_flipped, title: str, outfile: str, rebin=4)
     Istogramma INT8 (-128..127) 'Golden vs Flipped' (globale).
     Normalizzato a densità (area=1). Barre semi-trasparenti.
     """
+    os.makedirs(os.path.dirname(os.path.abspath(outfile)) or ".", exist_ok=True)
     # Rebin (meno barre = più leggibile). factor=4 -> 64 barre.
     hg = _rebin_hist256(h_golden, rebin)
     hf = _rebin_hist256(h_flipped, rebin)
@@ -554,6 +566,8 @@ def _make_global_int8_barplots(weight_rows_all: list, outdir: str, rebin=4):
     """
     Crea 1 grafico per modalità (bitwise-not e/o qnegate): Golden vs Flipped (layer=__global__).
     """
+    os.makedirs(outdir, exist_ok=True)
+
     # indicizza righe __global__
     globals_by_key = {}  # (ds, net, mode) -> hist_256
     for r in weight_rows_all:
@@ -648,14 +662,12 @@ def main():
                     help="CSV con istogrammi e statistiche dei pesi (baseline e fault).")
     ap.add_argument("--logdir", default="logs", help="Cartella dei log")
     ap.add_argument("--plots", action="store_true",
-                help="Se passato, salva i grafici degli istogrammi per layer e delle std globali.")
+                    help="Se passato, salva i grafici degli istogrammi per layer e delle std globali.")
     ap.add_argument("--plotdir", default="plots", help="Cartella in cui salvare i plot")
-    
     ap.add_argument("--int8bars", action="store_true",
                     help="Salva istogrammi INT8 globali (Golden vs Flipped) per ogni modalità.")
     ap.add_argument("--int8bars-rebin", type=int, default=4,
                     help="Fattore di rebin dei 256 bin (es. 4 -> 64 barre).")
-
 
     # opzionale: override datasets
     ap.add_argument("--datasets", nargs="*", default=None,
@@ -743,7 +755,6 @@ def main():
         os.makedirs(args.plotdir, exist_ok=True)
         _make_global_int8_barplots(weight_rows_all, args.plotdir, rebin=args.int8bars_rebin)
         print(f"[PLOTS-INT8] Salvati in: {args.plotdir}")
-
 
     print(f"[DONE] Salvati:\n"
           f"  - risultati: {args.out_results}\n"

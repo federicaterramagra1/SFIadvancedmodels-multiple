@@ -666,8 +666,13 @@ if __name__ == "__main__":
     model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes = build_and_quantize_once()
 
     # Sweep: STAT con CI
-    for N in [ 1, 2,3,4,5, 6, 7, 8, 9, 10, 50, 100, 150, 
-             384, 768, 960, 1104, 1408, 1728, 1984, 2048, 2208   ]:
+    for N in [ #1, 2,3,4,5, 6, 7, 8, 9, 10, 50, 100, 150, 
+             #384, 768, 960, 1104, 1408, 1728, 1984, 2048, 2208
+             576
+             #384, 768, 960, 1104, 1408,
+                 #1728, 1984, 2048, 2208 
+                # 144, 200, 287, 288  
+             ]:
               #1104, 800, 900, 1000, 1200, 1400, 1600, 1700, 1800, 2000, 2100, 2200
         run_fault_injection(
             model=model,

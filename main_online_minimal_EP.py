@@ -769,8 +769,9 @@ if __name__ == "__main__":
     model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes = build_and_quantize_once()
 
     # STATISTICHE EP per N = 1..5 (NO esaustiva)
-    for N in [1, 2,3,4,5, 6, 7, 8, 9, 10, 50, 100, 150, 
-             384, 768, 960, 1104, 1408, 1728, 1984, 2048, 2208 #, 384,576,
+    for N in [#1, 2,3,4,5, 6, 7, 8, 9, 10, 50, 100, 150, 
+             #384,
+               576, 768, 960, 1104, 1408, 1728, 1984, 2048, 2208 #, 384,576,
               #766 ,960, 1104, 1408,1728,1984,2048,2208
 ]:
         avg, half_tuple, n_used, _, out_file = run_fault_injection(
