@@ -39,7 +39,7 @@ import csv
 import argparse
 import heapq
 from itertools import product, combinations
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -265,7 +265,7 @@ def run_exhaustive_campaign(model: torch.nn.Module,
                             bs: int,
                             shard: int = 1,
                             shards: int = 1,
-                            limit: int | None = None,
+                            limit: Optional[int] = None,
                             top_k: int = 100):
     """
     Enumera tutte (o una sottopopolazione) delle combinazioni esatte di K fault *senza duplicati*.

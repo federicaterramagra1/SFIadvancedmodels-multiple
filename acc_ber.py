@@ -2,16 +2,32 @@
 # -*- coding: utf-8 -*-
 
 """
-Accuracy vs BER (WineMLP) con barre di errore.
-- Grafico 1: Wilson 95% con n = 1 (didattico)
-- Grafico 1b: Wald 95% con n = 1 (punti = FR_ep)
-- Grafico 2: Wilson 95% con n = n_wilson (dalla tabella)
-- Grafico 3: EP/Wald 95% (punti = f-rate EP, barre = intervallo di Wald da tabella)
-- Grafico 4: Wald 95% con n = 19000 costante (punti = FR_wilson)
-- Grafico 5: One-Step FPC (punti = FR_one_step, barre = ±epsilon da tabella)
+WineMLP — Accuracy vs BER (tutti i grafici da tabella + n=1 random)
 
-Nessuna campagna: usa solo i dati forniti.
-Salva in plots/acc_ber/.
+Richiede un CSV "summary" e un CSV "n1" – OPPURE può generare il CSV n=1 con --autogen-n1.
+
+1) Tabella “summary” con (header esatti, ordine libero):
+   K, n_wilson, FR_wilson, FR_wilson_low, FR_wilson_high,
+   n_ep, FR_ep, wald_low, wald_high,
+   N_FPC, FR_onestep, EPS_onestep
+   (Opzionali: n_ep_wilson, FR_ep_wilson, WILSON_low, WILSON_high)
+
+2) Punti n=1 random: K,rep,fr_n1 (con 3 repliche: rep ∈ {1,2,3})
+
+Esempi:
+  (solo plotting, CSV già pronti)
+  python acc_ber.py \
+    --table-csv plots/acc_ber/summary_table.csv \
+    --n1-csv plots/acc_ber/n1_random_points.csv \
+    --ci-n1 both --M 768 --z 1.96 --n19000 19000
+
+  (genera n=1 dentro lo script + plotting)
+  python acc_ber.py \
+    --table-csv plots/acc_ber/summary_table.csv \
+    --autogen-n1 --n1-K-list 1,2,3,4,5,6,7,8,9,10,50,100,150,384,575,768 \
+    --n1-reps 3 --n1-seed 0 \
+    --n1-out plots/acc_ber/n1_random_points.csv \
+    --ci-n1 both --M 768
 """
 
 import os
@@ -21,79 +37,52 @@ import numpy as np
 import pandas as pd
 
 import matplotlib
-matplotlib.use("Agg")  # headless
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ---------- Parametri ----------
-M_DEFAULT = 768  # Total Faults (bit elementari) per WineMLP
+# ============================ Costanti di stile (GLOBALI) ============================
 
-# Tabella embedded:
-# (K, FR_exhaustive, n_wilson, FR_wilson, FR_wilson_low, FR_wilson_high,
-#  n_ep, FR_ep, wald_low, wald_high)
-ROWS = [
-    (1,   0.00663098, 1300, 0.00739316, 0.00397337, 0.01371576, 1150,  0.00737520, 0.00242997, 0.01232043),
-    (2,   0.01280599, 2150, 0.01335056, 0.00929436, 0.01914274, 2000,  0.01318519, 0.00818597, 0.01818440),
-    (3,   0.01305633, 2850, 0.01829760, 0.01398614, 0.02390591, 2800,  0.01842593, 0.01344450, 0.02340735),
-    (4,   float("nan"), 3700, 0.02438939, 0.01989041, 0.02987497, 3650,  0.02422628, 0.01923827, 0.02921429),
-    (5,   float("nan"), 4450, 0.02949230, 0.02491289, 0.03488337, 4400,  0.02941498, 0.02442234, 0.03440763),
-    (6,   float("nan"), 5150, 0.03419274, 0.02956643, 0.03951346, 5085,  0.03424014, 0.02924195, 0.03923833),
-    (7,   float("nan"), 5800, 0.03914751, 0.03445349, 0.04445162, 5787,  0.03913305, 0.03413693, 0.04412917),
-    (8,   float("nan"), 6500, 0.04389459, 0.03917785, 0.04915013, 6450,  0.04382142, 0.03882580, 0.04881703),
-    (9,   float("nan"), 7050, 0.04791437, 0.04317009, 0.05315107, 7050,  0.04790386, 0.04291861, 0.05288911),
-    (10,  float("nan"), 7650, 0.05231905, 0.04755011, 0.05753739, 7627,  0.05233843, 0.04734020, 0.05733666),
-    (50,  float("nan"),21400, 0.16675320, 0.16181882, 0.17180721, 21357, 0.16678372, 0.16178405, 0.17178340),
-    (100, float("nan"),30750, 0.27625053, 0.27128091, 0.28127605, 30727, 0.27627892, 0.27127908, 0.28127875),
-    (150, float("nan"),36300, 0.38167330, 0.37668851, 0.38668313, 36288, 0.38165560, 0.37665727, 0.38665394),
-    (384, float("nan"),34350, 0.66263410, 0.65761605, 0.66761579, 34370, 0.66261328, 0.65761454, 0.66761202),
-    (575, float("nan"),38050, 0.55170585, 0.54670382, 0.55669743, 38108, 0.54497646, 0.53997665, 0.54997627),
-    (766, float("nan"),28400, 0.24469288, 0.23972764, 0.24972718, 28403, 0.24471985, 0.23971993, 0.24971976),
-]
+# stile base SENZA marker (il marker viene passato nelle funzioni di plot)
+LINE_BASE = dict(
+    color="k", linewidth=1.6,
+    markeredgecolor="k", markerfacecolor="white",
+    markeredgewidth=1.3, zorder=3
+)
 
-# n (with Pop. Correcting Factor) allineati a ROWS (informativo)
-N_FPC_LIST = [
-    753, 33984, 38396, 38416, 38416, 38416, 38416, 38416,
-    38416, 38416, 38416, 38416, 38416, 38416, 38416, 33984,
-]
+COL_WIL_TABLE  = "#2ca02c"  # grafico 2 (Wilson n_wilson)
+COL_EP_WALD    = "#d62728"  # grafico 3 (EP con Wald)
+COL_EP_WILSON  = "#8c564b"  # grafico 3b (EP con Wilson) opzionale
+COL_WALD_19000 = "#9467bd"  # grafico 4 (Wald n costante)
+COL_WALD_FPC   = "#ff7f0e"  # grafico 5 (One-Step FPC)
+COL_N1_WIL     = "#1f77b4"  # n=1 Wilson
+COL_N1_WALD    = "#17becf"  # n=1 Wald
 
-# One-Step (FPC) – f-rate ed epsilon dalla tabella, allineati a ROWS
-ONESTEP_FR_LIST = [
-    0.00671389, 0.01284973, 0.01865163, 0.02421011, 0.02944327, 0.03438768,
-    0.03909829, 0.04377275, 0.04818112, 0.05236630, 0.16679055, 0.27665460,
-    0.38221054, 0.66288352, 0.54930623, 0.24475516,
-]
-ONESTEP_EPS_LIST = [
-    0.00081570, 0.00112625, 0.00135290, 0.00153701, 0.00169045, 0.00182223,
-    0.00193829, 0.00204589, 0.00214149, 0.00222765, 0.00372789, 0.00447344,
-    0.00429879, 0.00472725, 0.00497563, 0.00429939,
-]
+# ============================ Statistiche ============================
 
-# ---------- Statistiche ----------
 def wilson_ci(p_hat: float, n: int, z: float = 1.96):
-    if n <= 0:
-        return 0.0, 1.0
-    p = min(max(float(p_hat), 1e-12), 1.0 - 1e-12)
+    if n <= 0: return 0.0, 1.0
+    p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
     denom  = 1.0 + (z*z)/n
     center = (p + (z*z)/(2*n)) / denom
     half   = (z * math.sqrt((p*(1.0 - p)/n) + (z*z)/(4*n*n))) / denom
     return max(0.0, center - half), min(1.0, center + half)
 
 def wald_ci(p_hat: float, n: int, z: float = 1.96):
-    if n <= 0:
-        return 0.0, 1.0
-    p = min(max(float(p_hat), 1e-12), 1.0 - 1e-12)
+    if n <= 0: return 0.0, 1.0
+    p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
     half = z * math.sqrt(p * (1.0 - p) / n)
     return max(0.0, p - half), min(1.0, p + half)
 
 def _nonneg_yerr(center, low, high):
-    low = np.minimum(low, center)
-    high = np.maximum(high, center)
+    center = np.asarray(center, dtype=float)
+    low = np.minimum(np.asarray(low, dtype=float), center)
+    high = np.maximum(np.asarray(high, dtype=float), center)
     neg = center - low
     pos = high - center
-    neg[neg < 0] = 0
-    pos[pos < 0] = 0
+    neg[neg < 0] = 0; pos[pos < 0] = 0
     return np.vstack([neg, pos])
 
-# ---------- Stile & helper ----------
+# -------------------- Stile assi --------------------
 def _style_axes():
     plt.xlabel("BER = K / M")
     plt.ylabel("Accuracy (1 − FR) [%]")
@@ -101,179 +90,324 @@ def _style_axes():
     plt.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.6)
     plt.gca().set_axisbelow(True)
 
-# linea/marker base (sotto)
-LINE_BASE = dict(color="k", linewidth=1.2, markeredgecolor="k",
-                 markerfacecolor="white", markeredgewidth=1.2, zorder=2)
+# -------------------- Helper grafici --------------------
+def _acc_from_fr(fr): 
+    return (1.0 - np.asarray(fr, dtype=float)) * 100.0
 
-# helper: prima la curva, poi gli error bar “in rilievo”
-def plot_with_errors(x, y, yerr, marker, err_color, label):
-    line_kw = LINE_BASE.copy()
-    line_kw["marker"] = marker
-    plt.plot(x, y, **line_kw, label=label)
-    plt.errorbar(x, y, yerr=yerr, fmt="none",
-                 ecolor=err_color, elinewidth=2.2, capsize=6, capthick=2.2,
-                 alpha=0.98, zorder=3)
+def _plot_series_with_bands(x, y_acc, low_acc, high_acc, color, marker, label, title, outpath):
+    yerr = _nonneg_yerr(y_acc, low_acc, high_acc)
+    fig = plt.figure(figsize=(7, 5), dpi=140)
+    # passa il marker QUI (LINE_BASE non lo ha)
+    plt.plot(x, y_acc, marker=marker, label=label, **LINE_BASE)
+    plt.errorbar(x, y_acc, yerr=yerr, fmt="none",
+                 ecolor=color, elinewidth=2.0, capsize=5, capthick=2.0, alpha=0.95, zorder=2)
+    _style_axes(); plt.title(title); plt.legend()
+    os.makedirs(os.path.dirname(outpath), exist_ok=True)
+    fig.tight_layout(); fig.savefig(outpath); plt.close(fig)
+    return outpath
 
-# Colori dei soli error bar
-COL_WIL_N1     = "#1f77b4"  # blu
-COL_WALD_N1_EP = "#17becf"  # ciano
-COL_WIL_TABLE  = "#2ca02c"  # verde
-COL_EP_WALD    = "#d62728"  # rosso
-COL_WALD_19000 = "#9467bd"  # viola
-COL_WALD_FPC   = "#ff7f0e"  # arancio
+# ============================ Plot: dalla tabella ============================
+
+def plot_from_table(df_tab: pd.DataFrame, M: int, outdir: str, z: float, n19000: int, title_prefix: str):
+    saved = []
+
+    # Ordina e calcola BER
+    df = df_tab.copy()
+    for c in ["K","n_wilson","FR_wilson","FR_wilson_low","FR_wilson_high",
+              "n_ep","FR_ep","wald_low","wald_high",
+              "N_FPC","FR_onestep","EPS_onestep",
+              "n_ep_wilson","FR_ep_wilson","WILSON_low","WILSON_high"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.sort_values("K").reset_index(drop=True)
+    x = (df["K"].astype(float) / float(M)).values
+
+    # ===== Grafico 2: Wilson (n = n_wilson) =====
+    y_acc  = _acc_from_fr(df["FR_wilson"].values)
+    low_a  = _acc_from_fr(df["FR_wilson_high"].values)  # high FR -> low Acc
+    high_a = _acc_from_fr(df["FR_wilson_low"].values)
+    p2 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_Wilson_nTable.png")
+    saved.append(_plot_series_with_bands(
+        x, y_acc, low_a, high_a, COL_WIL_TABLE, "o",
+        label="Wilson (n = n_wilson)", 
+        title=f"{title_prefix} — Accuracy vs BER (Wilson 95% CI, n = n_injections)",
+        outpath=p2
+    ))
+
+    # ===== Grafico 3: EP (punti = FR_ep; barre = Wald da tabella) =====
+    if {"FR_ep","wald_low","wald_high"}.issubset(df.columns):
+        y_acc  = _acc_from_fr(df["FR_ep"].values)
+        low_a  = _acc_from_fr(df["wald_high"].values)
+        high_a = _acc_from_fr(df["wald_low"].values)
+        p3 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_EP_Wald.png")
+        saved.append(_plot_series_with_bands(
+            x, y_acc, low_a, high_a, COL_EP_WALD, "s",
+            label="EP (Wald 95% CI)",
+            title=f"{title_prefix} — Accuracy vs BER (EP, Wald 95% CI)",
+            outpath=p3
+        ))
+
+    # (Opzionale) EP-Wilson se presente in tabella
+    if {"FR_ep_wilson","WILSON_low","WILSON_high"}.issubset(df.columns):
+        y_acc  = _acc_from_fr(df["FR_ep_wilson"].values)
+        low_a  = _acc_from_fr(df["WILSON_high"].values)
+        high_a = _acc_from_fr(df["WILSON_low"].values)
+        p3b = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_EP_Wilson.png")
+        saved.append(_plot_series_with_bands(
+            x, y_acc, low_a, high_a, COL_EP_WILSON, "D",
+            label="EP (Wilson 95% CI)",
+            title=f"{title_prefix} — Accuracy vs BER (EP, Wilson 95% CI)",
+            outpath=p3b
+        ))
+
+    # ===== Grafico 4: Wald n = n19000 costante (sui FR_wilson) =====
+    acc  = _acc_from_fr(df["FR_wilson"].values)
+    low  = []; high = []
+    for p in df["FR_wilson"].values:
+        lo, hi = wald_ci(float(p), n=n19000, z=z)
+        low.append((1.0 - hi) * 100.0)
+        high.append((1.0 - lo) * 100.0)
+    p4 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_Wald_n{n19000}.png")
+    saved.append(_plot_series_with_bands(
+        x, acc, np.array(low), np.array(high), COL_WALD_19000, "d",
+        label=f"Wald (n = {n19000})",
+        title=f"{title_prefix} — Accuracy vs BER (Wald 95% CI, n = {n19000})",
+        outpath=p4
+    ))
+
+    # ===== Grafico 5: One-Step FPC (punti FR_onestep; barre ±EPS) =====
+    if {"FR_onestep","EPS_onestep"}.issubset(df.columns):
+        fr  = df["FR_onestep"].values.astype(float)
+        eps = df["EPS_onestep"].values.astype(float)
+        acc = (1.0 - fr) * 100.0
+        low = (1.0 - np.clip(fr + eps, 0.0, 1.0)) * 100.0
+        high= (1.0 - np.clip(fr - eps, 0.0, 1.0)) * 100.0
+        p5 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_OneStepFPC.png")
+        saved.append(_plot_series_with_bands(
+            x, acc, low, high, COL_WALD_FPC, "^",
+            label="One-Step (FPC, ε tabella)",
+            title=f"{title_prefix} — Accuracy vs BER (One-Step FPC, 95%)",
+            outpath=p5
+        ))
+
+    return saved
+
+# ============================ n=1: generazione opzionale ============================
+
+def autogen_n1_points(Ks, reps=3, seed=0, out_csv=None):
+    """
+    Genera punti n=1 (una iniezione con K fault elementari scelti a caso) usando il tuo stack.
+    Ritorna un DataFrame (K, rep, fr_n1). Se out_csv è dato, salva anche il CSV.
+    Richiede i moduli: faultManager.*, utils.*, SETTINGS.
+    """
+    import random
+    from itertools import product
+    import torch
+    from tqdm import tqdm
+
+    from faultManager.WeightFault import WeightFault
+    from faultManager.WeightFaultInjector import WeightFaultInjector
+    from utils import get_loader, load_from_dict, get_network, load_quantized_model, save_quantized_model
+    import SETTINGS
+
+    def _get_quant_weight(module: torch.nn.Module) -> torch.Tensor:
+        if hasattr(module, "weight"):
+            try: return module.weight()
+            except Exception: pass
+        if hasattr(module, "_packed_params") and hasattr(module._packed_params, "_weight_bias"):
+            w, _ = module._packed_params._weight_bias()
+            return w
+        raise RuntimeError("Impossibile ottenere il peso quantizzato dal modulo.")
+
+    def _build_all_faults(model):
+        faults = []
+        for name, module in model.named_modules():
+            if isinstance(module, (torch.nn.quantized.Linear, torch.nn.quantized.Conv2d)):
+                try: w = _get_quant_weight(module)
+                except Exception: continue
+                for idx in product(*[range(s) for s in w.shape]):
+                    for bit in range(8):
+                        faults.append((name, idx, bit))
+        return faults
+
+    def _build_and_quantize_once():
+        torch.backends.quantized.engine = "fbgemm"
+        device = torch.device("cpu")
+        ds = getattr(SETTINGS, "DATASET_NAME", getattr(SETTINGS, "DATASET", ""))
+        net = getattr(SETTINGS, "NETWORK_NAME", getattr(SETTINGS, "NETWORK", ""))
+
+        train_loader, _, test_loader = get_loader(
+            dataset_name=ds,
+            batch_size=getattr(SETTINGS, "BATCH_SIZE", 64),
+            network_name=net
+        )
+        qmodel, qpath = load_quantized_model(ds, net, device="cpu", engine="fbgemm")
+        if qmodel is not None:
+            model = qmodel
+            print(f"[PTQ] caricato quantizzato: {qpath}")
+        else:
+            model = get_network(net, device, ds).to(device).eval()
+            ckpt = f"./trained_models/{ds}_{net}_trained.pth"
+            if os.path.exists(ckpt):
+                load_from_dict(model, device, ckpt)
+                print("[CKPT] checkpoint float caricato")
+            if hasattr(model, "quantize_model"):
+                model.quantize_model(calib_loader=train_loader)
+                model.eval()
+                save_quantized_model(model, ds, net, engine="fbgemm")
+                print("[PTQ] quantizzato e salvato")
+        clean_by_batch = []
+        with torch.inference_mode():
+            for xb, _ in test_loader:
+                logits = model(xb.to(device))
+                clean_by_batch.append(torch.argmax(logits, dim=1).cpu())
+        total_samples = sum(len(t) for t in clean_by_batch)
+        if total_samples == 0:
+            raise RuntimeError("Test loader vuoto.")
+        return model, device, test_loader, clean_by_batch, total_samples
+
+    def _eval_frcrit_for_combo(model, device, test_loader, clean_by_batch, combo, inj_id, total_samples):
+        injector = WeightFaultInjector(model)
+        faults = [WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bits=[bt])
+                  for (ln, ti, bt) in combo]
+        mismatches = 0
+        try:
+            injector.inject_faults(faults, 'bit-flip')
+            with torch.inference_mode():
+                for batch_i, (xb, _) in enumerate(test_loader):
+                    pred_f = torch.argmax(model(xb.to(device)), dim=1).cpu().numpy()
+                    clean_pred = clean_by_batch[batch_i].numpy()
+                    mismatches += int((pred_f != clean_pred).sum())
+        finally:
+            injector.restore_golden()
+        return mismatches / float(total_samples)
+
+    # ---- esecuzione ----
+    Ks = list(sorted(set(int(k) for k in Ks)))
+    model, device, test_loader, clean_by_batch, total_samples = _build_and_quantize_once()
+    all_faults = _build_all_faults(model)
+    M = len(all_faults)
+    print(f"[n=1] Elementary faults M = {M}")
+
+    rows = []
+    inj_id = 0
+    for rep in range(1, reps + 1):
+        rnd = random.Random(seed + 10007 * rep)
+        for K in Ks:
+            if K > M:
+                print(f"[WARN] K={K} > M={M}: salto.")
+                continue
+            idxs = rnd.sample(range(M), K)
+            combo = [all_faults[i] for i in idxs]
+            inj_id += 1
+            fr = _eval_frcrit_for_combo(model, device, test_loader, clean_by_batch,
+                                        combo, inj_id, total_samples)
+            rows.append((K, rep, float(fr)))
+            print(f"[n=1] rep={rep:2d} K={K:4d} → FR={fr:.6f}")
+
+    df = pd.DataFrame(rows, columns=["K","rep","fr_n1"]).sort_values(["rep","K"]).reset_index(drop=True)
+    if out_csv:
+        os.makedirs(os.path.dirname(os.path.abspath(out_csv)) or ".", exist_ok=True)
+        df.to_csv(out_csv, index=False)
+        print(f"[n=1] salvato: {out_csv}")
+    return df
+
+# ============================ Plot: n=1 random (3 repliche) ============================
+
+def plot_n1_random(df_n1: pd.DataFrame, M: int, outdir: str, z: float, title_prefix: str, ci_kind: str):
+    saved = []
+    df = df_n1.copy()
+    for c in ["K","rep","fr_n1"]:
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+    reps = sorted(df["rep"].dropna().unique().tolist())
+
+    for rep in reps:
+        sub = df[df["rep"] == rep].sort_values("K")
+        x = (sub["K"].astype(float) / float(M)).values
+        p = sub["fr_n1"].astype(float).values
+
+        def _do(ci_label, color):
+            lo = []; hi = []
+            for pi in p:
+                if ci_label == "wilson": l, h = wilson_ci(pi, n=1, z=z)
+                else:                     l, h = wald_ci  (pi, n=1, z=z)
+                lo.append(l); hi.append(h)
+            acc_pts  = (1.0 - p)  * 100.0
+            acc_low  = (1.0 - np.array(hi)) * 100.0
+            acc_high = (1.0 - np.array(lo)) * 100.0
+            yerr = _nonneg_yerr(acc_pts, acc_low, acc_high)
+
+            fig = plt.figure(figsize=(7, 5), dpi=140)
+            # linea nera che passa ESATTAMENTE per i punti della replica
+            plt.plot(x, acc_pts, marker="o", label=f"rep {rep} (n=1)", **LINE_BASE)
+            plt.errorbar(x, acc_pts, yerr=yerr, fmt="none",
+                         ecolor=color, elinewidth=2.0, capsize=5, capthick=2.0, alpha=0.95, zorder=2)
+            _style_axes()
+            name = "Wilson" if ci_label=="wilson" else "Wald"
+            plt.title(f"{title_prefix} — Accuracy vs BER ({name} 95% CI, n=1, replica {int(rep)})")
+            plt.legend()
+            fn = f"{title_prefix}_accuracy_vs_BER_{name}_n1_rep{int(rep)}.png"
+            path = os.path.join(outdir, fn)
+            fig.tight_layout(); fig.savefig(path); plt.close(fig)
+            return path
+
+        if ci_kind in ("wilson","both"):
+            saved.append(_do("wilson", COL_N1_WIL))
+        if ci_kind in ("wald","both"):
+            saved.append(_do("wald",   COL_N1_WALD))
+    return saved
+
+
+# ============================ Main ============================
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--M", type=int, default=M_DEFAULT)
+    ap.add_argument("--table-csv", type=str, required=True,
+                    help="CSV della tabella summary (vedi header richiesti nel docstring)")
+    ap.add_argument("--n1-csv", type=str, default=None,
+                    help="CSV con punti n=1 random (K,rep,fr_n1). Ignorato se --autogen-n1.")
+    ap.add_argument("--autogen-n1", action="store_true",
+                    help="Se presente, genera i punti n=1 direttamente in questo script.")
+    ap.add_argument("--n1-K-list", type=str,
+                    default="1,2,3,4,5,6,7,8,9,10,50,100,150,384,575,768")
+    ap.add_argument("--n1-reps", type=int, default=3)
+    ap.add_argument("--n1-seed", type=int, default=0)
+    ap.add_argument("--n1-out", type=str, default="plots/acc_ber/n1_random_points.csv",
+                    help="Dove salvare (o leggere) i punti n=1")
     ap.add_argument("--outdir", type=str, default="plots/acc_ber")
-    ap.add_argument("--svg", action="store_true")
+    ap.add_argument("--M", type=int, default=768)
     ap.add_argument("--z", type=float, default=1.96)
     ap.add_argument("--n19000", type=int, default=19000)
+    ap.add_argument("--ci-n1", choices=["wilson","wald","both"], default="wilson",
+                    help="Tipo di CI per i grafici n=1")
+    ap.add_argument("--title", type=str, default="WineMLP")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    df = pd.DataFrame(
-        ROWS,
-        columns=["K","FR_exhaustive","n_wilson","FR_wilson","FR_wilson_low","FR_wilson_high",
-                 "n_ep","FR_ep","wald_low","wald_high"],
-    ).sort_values("K").reset_index(drop=True)
+    # ---- Carica tabella summary ----
+    df_tab = pd.read_csv(args.table_csv)
 
-    # BER
-    df["BER"] = df["K"] / float(args.M)
-
-    # Punti in Accuracy (da Wilson tabellato)
-    df["Acc_point_wilson"]    = (1.0 - df["FR_wilson"]) * 100.0
-    df["Acc_low_tab_wilson"]  = (1.0 - df["FR_wilson_high"]) * 100.0
-    df["Acc_high_tab_wilson"] = (1.0 - df["FR_wilson_low"])  * 100.0
-
-    # ===== Grafico 1: Wilson n=1 (didattico) =====
-    x = df["BER"].values
-    acc_points_1, acc_low_1, acc_high_1 = [], [], []
-    for p in df["FR_wilson"].values:
-        lo, hi = wilson_ci(float(p), n=1, z=args.z)
-        acc_points_1.append((1.0 - p) * 100.0)
-        acc_low_1.append((1.0 - hi) * 100.0)
-        acc_high_1.append((1.0 - lo) * 100.0)
-    acc_points_1 = np.array(acc_points_1)
-    yerr_1 = _nonneg_yerr(acc_points_1, np.array(acc_low_1), np.array(acc_high_1))
-
-    fig1 = plt.figure(figsize=(7, 5), dpi=140)
-    plot_with_errors(x, acc_points_1, yerr_1, marker="o", err_color=COL_WIL_N1, label="Wilson (n=1)")
-    _style_axes(); plt.title("WineMLP — Accuracy vs BER (Wilson 95% CI, n = 1)"); plt.legend()
-    p1 = os.path.join(args.outdir, "WineMLP_accuracy_vs_BER_Wilson_n1.png")
-    fig1.tight_layout(); fig1.savefig(p1); 
-    if args.svg: fig1.savefig(p1.replace(".png",".svg"))
-    plt.close(fig1)
-
-    # ===== Grafico 1b: Wald n=1 (punti = FR_ep) =====
-    if not df["FR_ep"].isna().all():
-        acc_points_wald1, acc_low_wald1, acc_high_wald1 = [], [], []
-        for p in df["FR_ep"].values:
-            lo, hi = wald_ci(float(p), n=1, z=args.z)
-            acc_points_wald1.append((1.0 - p) * 100.0)
-            acc_low_wald1.append((1.0 - hi) * 100.0)
-            acc_high_wald1.append((1.0 - lo) * 100.0)
-        acc_points_wald1 = np.array(acc_points_wald1)
-        yerr_wald1 = _nonneg_yerr(acc_points_wald1, np.array(acc_low_wald1), np.array(acc_high_wald1))
-
-        fig1b = plt.figure(figsize=(7, 5), dpi=140)
-        plot_with_errors(x, acc_points_wald1, yerr_wald1, marker="v",
-                         err_color=COL_WALD_N1_EP, label="Wald (n=1, p̂ = EP)")
-        _style_axes(); plt.title("WineMLP — Accuracy vs BER (Wald 95% CI, n = 1, p̂ = EP)"); plt.legend()
-        p1b = os.path.join(args.outdir, "WineMLP_accuracy_vs_BER_Wald_n1_EP.png")
-        fig1b.tight_layout(); fig1b.savefig(p1b);
-        if args.svg: fig1b.savefig(p1b.replace(".png",".svg"))
-        plt.close(fig1b)
+    # ---- Carica o genera n=1 ----
+    if args.autogen_n1:
+        Ks = [int(x.strip()) for x in args.n1_K_list.split(",") if x.strip()]
+        df_n1 = autogen_n1_points(Ks, reps=args.n1_reps, seed=args.n1_seed, out_csv=args.n1_out)
     else:
-        p1b = None
+        if not args.n1_csv:
+            # fallback: prova a leggere da --n1-out se non dato --n1-csv
+            args.n1_csv = args.n1_out
+        df_n1  = pd.read_csv(args.n1_csv)
 
-    # ===== Grafico 2: Wilson n = n_wilson (tabella) =====
-    acc_points_n = df["Acc_point_wilson"].values
-    yerr_n = _nonneg_yerr(acc_points_n,
-                          df["Acc_low_tab_wilson"].values,
-                          df["Acc_high_tab_wilson"].values)
+    # ---- Plot ----
+    saved = []
+    saved += plot_from_table(df_tab, M=args.M, outdir=args.outdir, z=args.z,
+                             n19000=args.n19000, title_prefix=args.title)
+    saved += plot_n1_random(df_n1, M=args.M, outdir=args.outdir, z=args.z,
+                            title_prefix=args.title, ci_kind=args.ci_n1)
 
-    fig2 = plt.figure(figsize=(7, 5), dpi=140)
-    plot_with_errors(x, acc_points_n, yerr_n, marker="o", err_color=COL_WIL_TABLE, label="Wilson (n = n_wilson)")
-    _style_axes(); plt.title("WineMLP — Accuracy vs BER (Wilson 95% CI, n = n_injections)"); plt.legend()
-    p2 = os.path.join(args.outdir, "WineMLP_accuracy_vs_BER_Wilson_nTable.png")
-    fig2.tight_layout(); fig2.savefig(p2);
-    if args.svg: fig2.savefig(p2.replace(".png",".svg"))
-    plt.close(fig2)
-
-    # ===== Grafico 3: EP (punti = FR_ep; barre = Wald da tabella) =====
-    if not df["FR_ep"].isna().all():
-        acc_points_ep = (1.0 - df["FR_ep"].values) * 100.0
-        acc_low_ep    = (1.0 - df["wald_high"].values) * 100.0
-        acc_high_ep   = (1.0 - df["wald_low"].values)  * 100.0
-        yerr_ep = _nonneg_yerr(acc_points_ep, acc_low_ep, acc_high_ep)
-
-        fig3 = plt.figure(figsize=(7, 5), dpi=140)
-        plot_with_errors(x, acc_points_ep, yerr_ep, marker="s", err_color=COL_EP_WALD, label="EP (Wald 95% CI)")
-        _style_axes(); plt.title("WineMLP — Accuracy vs BER (EP, Wald 95% CI)"); plt.legend()
-        p3 = os.path.join(args.outdir, "WineMLP_accuracy_vs_BER_EP_Wald.png")
-        fig3.tight_layout(); fig3.savefig(p3);
-        if args.svg: fig3.savefig(p3.replace(".png",".svg"))
-        plt.close(fig3)
-    else:
-        p3 = None
-
-    # ===== Grafico 4: Wald n = 19000 (punti = FR_wilson) =====
-    acc_points_w19000, acc_low_w19000, acc_high_w19000 = [], [], []
-    for p in df["FR_wilson"].values:
-        lo, hi = wald_ci(float(p), n=args.n19000, z=args.z)
-        acc_points_w19000.append((1.0 - p) * 100.0)
-        acc_low_w19000.append((1.0 - hi) * 100.0)
-        acc_high_w19000.append((1.0 - lo) * 100.0)
-    acc_points_w19000 = np.array(acc_points_w19000)
-    yerr_w19000 = _nonneg_yerr(acc_points_w19000, np.array(acc_low_w19000), np.array(acc_high_w19000))
-
-    fig4 = plt.figure(figsize=(7, 5), dpi=140)
-    plot_with_errors(x, acc_points_w19000, yerr_w19000, marker="d", err_color=COL_WALD_19000,
-                     label=f"Wald (n = {args.n19000})")
-    _style_axes(); plt.title(f"WineMLP — Accuracy vs BER (Wald 95% CI, n = {args.n19000})"); plt.legend()
-    p4 = os.path.join(args.outdir, f"WineMLP_accuracy_vs_BER_Wald_n{args.n19000}.png")
-    fig4.tight_layout(); fig4.savefig(p4);
-    if args.svg: fig4.savefig(p4.replace(".png",".svg"))
-    plt.close(fig4)
-
-    # ===== Grafico 5: One-Step FPC (punti = FR_one_step; barre = ±epsilon tabella) =====
-    if (len(N_FPC_LIST) == len(df) == len(ONESTEP_FR_LIST) == len(ONESTEP_EPS_LIST)):
-        fr_onestep  = np.array(ONESTEP_FR_LIST, dtype=float)
-        eps_onestep = np.array(ONESTEP_EPS_LIST, dtype=float)
-
-        # Limiti FR con epsilon, clamp in [0,1] per sicurezza
-        lo_fr = np.clip(fr_onestep - eps_onestep, 0.0, 1.0)
-        hi_fr = np.clip(fr_onestep + eps_onestep, 0.0, 1.0)
-
-        # Converti in Accuracy
-        acc_points_fpc = (1.0 - fr_onestep) * 100.0
-        acc_low_fpc    = (1.0 - hi_fr)      * 100.0
-        acc_high_fpc   = (1.0 - lo_fr)      * 100.0
-        yerr_fpc = _nonneg_yerr(acc_points_fpc, acc_low_fpc, acc_high_fpc)
-
-        fig5 = plt.figure(figsize=(7, 5), dpi=140)
-        plot_with_errors(x, acc_points_fpc, yerr_fpc, marker="^",
-                         err_color=COL_WALD_FPC, label="One-Step (FPC, ε tabella)")
-        _style_axes(); plt.title("WineMLP — Accuracy vs BER (One-Step FPC, 95%, ε tabella)"); plt.legend()
-        p5 = os.path.join(args.outdir, "WineMLP_accuracy_vs_BER_Wald_nFPC.png")
-        fig5.tight_layout(); fig5.savefig(p5);
-        if args.svg: fig5.savefig(p5.replace(".png",".svg"))
-        plt.close(fig5)
-    else:
-        p5 = None
-        print(f"[WARN] Liste FPC non allineate: N_FPC={len(N_FPC_LIST)}, df={len(df)}, "
-              f"FR={len(ONESTEP_FR_LIST)}, EPS={len(ONESTEP_EPS_LIST)}")
-
-    # ---------- Log ----------
     print("[OK] Salvato:")
-    print(" -", p1)
-    if p1b: print(" -", p1b)
-    print(" -", p2)
-    if p3: print(" -", p3)
-    print(" -", p4)
-    if p5: print(" -", p5)
+    for p in saved:
+        print(" -", p)
 
 if __name__ == "__main__":
     main()

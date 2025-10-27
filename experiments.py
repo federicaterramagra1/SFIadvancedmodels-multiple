@@ -7,6 +7,10 @@ Esegue due modalità:
   - bitwise-not: ~ su TUTTI gli 8 bit dei pesi quantizzati (equivale a v' = ~v)
   - qnegate    : negazione vera dei pesi nel dominio quantizzato (v' = -v)
 
+Gestione modello:
+  - Tenta di CARICARE un modello quantizzato salvato (PTQ persistito).
+  - Se non presente: costruisce il modello float (+ checkpoint .pth se disponibile), esegue PTQ, e SALVA il quantizzato per i run futuri.
+
 Output:
   - CSV risultati (FRcrit, distribuzioni baseline/faulty, K siti, ecc.)
   - CSV qparams (per layer: dtype, qscheme, shape, scale/zero_point)
@@ -29,7 +33,10 @@ from tqdm import tqdm
 # --- dipendenze dal tuo progetto ---
 from faultManager.WeightFault import WeightFault
 from faultManager.WeightFaultInjector import WeightFaultInjector
-from utils import get_loader, load_from_dict, get_network
+from utils import (
+    get_loader, load_from_dict, get_network,
+    load_quantized_model, save_quantized_model,   # <— NEW: coerente con EP
+)
 import SETTINGS
 
 import matplotlib
@@ -108,34 +115,52 @@ def _get_all_quant_modules(model):
 # ============================= Build, quantize, baseline =============================
 
 def build_and_quantize(logger: DualLogger):
-    # Forza backend quantizzato CPU
+    """
+    - Forza backend quantizzato CPU (fbgemm).
+    - Prova a caricare un modello quantizzato persistito.
+    - Se assente: costruisce modello float, carica .pth se presente, esegue PTQ e SALVA il quantizzato.
+    - Calcola baseline e ritorna anche K (numero siti quantizzati).
+    """
     torch.backends.quantized.engine = "fbgemm"
     device = torch.device("cpu")
 
-    logger.log(f"Loading {SETTINGS.NETWORK_NAME} for {SETTINGS.DATASET_NAME} dataset...")
-    model = get_network(SETTINGS.NETWORK_NAME, device, SETTINGS.DATASET_NAME)
-    model.to(device).eval()
-    ckpt = f"./trained_models/{SETTINGS.DATASET_NAME}_{SETTINGS.NETWORK_NAME}_trained.pth"
-    if os.path.exists(ckpt):
-        load_from_dict(model, device, ckpt)
-        logger.log("[INFO] checkpoint caricato")
-    else:
-        logger.log(f"[WARN] checkpoint non trovato: {ckpt} (proseguo senza)")
+    ds = SETTINGS.DATASET_NAME
+    net = SETTINGS.NETWORK_NAME
+    logger.log(f"Loading {net} for {ds} dataset...")
 
-    # Loader
+    # Loader (serve sempre: per calibrazione PTQ e per test)
     train_loader, _, test_loader = get_loader(
-        dataset_name=SETTINGS.DATASET_NAME,
+        dataset_name=ds,
         batch_size=SETTINGS.BATCH_SIZE,
-        network_name=SETTINGS.NETWORK_NAME
+        network_name=net
     )
 
-    # Quantizzazione se supportata
-    if hasattr(model, "quantize_model"):
-        model.quantize_model(calib_loader=train_loader)
-        model.eval()
-        logger.log("[INFO] quantizzazione completata")
+    # 1) Tenta il CARICAMENTO del quantizzato salvato
+    qmodel, qpath = load_quantized_model(ds, net, device="cpu", engine="fbgemm")
+    if qmodel is not None:
+        model = qmodel
+        model.to(device).eval()
+        logger.log(f"[PTQ] Quantized model caricato: {qpath}")
     else:
-        logger.log("[WARN] modello non quantizzabile: procedo senza quantizzazione")
+        # 2) Costruisce modello float + checkpoint
+        model = get_network(net, device, ds)
+        model.to(device).eval()
+
+        ckpt = f"./trained_models/{ds}_{net}_trained.pth"
+        if os.path.exists(ckpt):
+            load_from_dict(model, device, ckpt)
+            logger.log("[CKPT] modello float caricato")
+        else:
+            logger.log(f"[WARN] checkpoint non trovato: {ckpt} (proseguo senza)")
+
+        # 3) PTQ se supportato + SALVATAGGIO
+        if hasattr(model, "quantize_model"):
+            model.quantize_model(calib_loader=train_loader)
+            model.eval()
+            qsave = save_quantized_model(model, ds, net, engine="fbgemm")
+            logger.log(f"[PTQ] quantizzazione completata (CPU) e salvata: {qsave}")
+        else:
+            logger.log("[PTQ] modello non quantizzabile – le modalità bitwise-not/qnegate richiedono moduli quantized")
 
     # Numero classi dai logits (robusto anche se la baseline non usa tutte le classi)
     with torch.inference_mode():
