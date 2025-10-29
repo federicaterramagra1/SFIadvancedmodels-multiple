@@ -3,8 +3,8 @@ import torch
 # ==============================
 # ESPERIMENTO: scegli dataset & rete
 # ==============================
-DATASET_NAME = 'Banknote'      # es.:  'Banknote' | 'Wine' | 'DryBean' | 
-NETWORK_NAME = 'SimpleMLP'   # es.: 'SimpleMLP' | 'WineMLP' | 'BeanMLP' | 
+DATASET_NAME = 'Wine'      # es.:  'Banknote' | 'Wine' | 'DryBean' | 'CIFAR10'
+NETWORK_NAME = 'WineMLP'   # es.: 'SimpleMLP' | 'WineMLP' | 'BeanMLP' | 'ResNet20'
 NUM_EPOCHS = 200
 USE_ADVANCED_TRAIN = False
 

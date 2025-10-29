@@ -2,32 +2,37 @@
 # -*- coding: utf-8 -*-
 
 """
-WineMLP — Accuracy vs BER (tutti i grafici da tabella + n=1 random)
+Accuracy vs BER — Wilson-only (log-scale X), with:
+  1) Summary graph from table (Wilson 95% CI)
+  2) n = 1 graph (Wilson 95% CI) using one chosen run
+  3) n = N graph (Wilson 95% CI), e.g. N = 100 (autogen or CSV)
 
-Richiede un CSV "summary" e un CSV "n1" – OPPURE può generare il CSV n=1 con --autogen-n1.
+Notes
+- BER = K / M
+- K = number of simultaneous bit-flips injected in one shot.
+- M = total number of elementary fault sites (all bits of quantized weight tensors considered).
 
-1) Tabella “summary” con (header esatti, ordine libero):
-   K, n_wilson, FR_wilson, FR_wilson_low, FR_wilson_high,
-   n_ep, FR_ep, wald_low, wald_high,
-   N_FPC, FR_onestep, EPS_onestep
-   (Opzionali: n_ep_wilson, FR_ep_wilson, WILSON_low, WILSON_high)
+Inputs
+- Summary CSV (required): must contain at least the columns
+    K, FR_wilson, FR_wilson_low, FR_wilson_high
+  (other columns are ignored)
 
-2) Punti n=1 random: K,rep,fr_n1 (con 3 repliche: rep ∈ {1,2,3})
+- n=1 CSV (optional unless autogenerating): columns can be either
+    (K, run, fr_n1)  or  (K, rep, fr_n1)
+  If multiple runs are present, choose which one via --n1-use-run.
 
-Esempi:
-  (solo plotting, CSV già pronti)
-  python acc_ber.py \
-    --table-csv plots/acc_ber/summary_table.csv \
-    --n1-csv plots/acc_ber/n1_random_points.csv \
-    --ci-n1 both --M 768 --z 1.96 --n19000 19000
+- n=N CSV (optional unless autogenerating): columns
+    (K, p_hat, n)       # p_hat is the mean FR across n random injections for that K
 
-  (genera n=1 dentro lo script + plotting)
-  python acc_ber.py \
-    --table-csv plots/acc_ber/summary_table.csv \
-    --autogen-n1 --n1-K-list 1,2,3,4,5,6,7,8,9,10,50,100,150,384,575,768 \
-    --n1-reps 3 --n1-seed 0 \
-    --n1-out plots/acc_ber/n1_random_points.csv \
-    --ci-n1 both --M 768
+Autogeneration
+- n=1 autogen: use --autogen-n1 to generate (K, run, fr_n1), with --n1-K-list and --n1-seed.
+- n=N autogen: use --autogen-nN and --nN to generate N injections per K, computing
+  p_hat = mean(FR_i) across N random injections for that K, then Wilson CI with n = N.
+
+Outputs (PNG)
+- {title}_accuracy_vs_BER_Wilson_Summary.png
+- {title}_accuracy_vs_BER_Wilson_n1_run{r}.png
+- {title}_accuracy_vs_BER_Wilson_n{N}.png
 """
 
 import os
@@ -35,43 +40,38 @@ import math
 import argparse
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass
+from typing import Optional, Sequence, Tuple, List
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ============================ Costanti di stile (GLOBALI) ============================
+# ============================ Style ============================
 
-# stile base SENZA marker (il marker viene passato nelle funzioni di plot)
 LINE_BASE = dict(
     color="k", linewidth=1.6,
     markeredgecolor="k", markerfacecolor="white",
     markeredgewidth=1.3, zorder=3
 )
 
-COL_WIL_TABLE  = "#2ca02c"  # grafico 2 (Wilson n_wilson)
-COL_EP_WALD    = "#d62728"  # grafico 3 (EP con Wald)
-COL_EP_WILSON  = "#8c564b"  # grafico 3b (EP con Wilson) opzionale
-COL_WALD_19000 = "#9467bd"  # grafico 4 (Wald n costante)
-COL_WALD_FPC   = "#ff7f0e"  # grafico 5 (One-Step FPC)
-COL_N1_WIL     = "#1f77b4"  # n=1 Wilson
-COL_N1_WALD    = "#17becf"  # n=1 Wald
+COL_WIL_SUM   = "#2ca02c"  # summary Wilson bands
+COL_WIL_N1    = "#1f77b4"  # n=1 Wilson bands
+COL_WIL_NN    = "#8c564b"  # n=N Wilson bands
 
-# ============================ Statistiche ============================
+def _style_axes_logx(xlim=(1e-4, 1.0)):
+    plt.xlabel("BER")
+    plt.ylabel("Accuracy (1 − FR) [%]")
+    plt.ylim(0, 100)
+    ax = plt.gca()
+    ax.set_xscale("log")
+    if xlim is not None:
+        ax.set_xlim(*xlim)  # ora arriva fino a 1.0 (10^0)
+    plt.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.6)
+    ax.set_axisbelow(True)
 
-def wilson_ci(p_hat: float, n: int, z: float = 1.96):
-    if n <= 0: return 0.0, 1.0
-    p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
-    denom  = 1.0 + (z*z)/n
-    center = (p + (z*z)/(2*n)) / denom
-    half   = (z * math.sqrt((p*(1.0 - p)/n) + (z*z)/(4*n*n))) / denom
-    return max(0.0, center - half), min(1.0, center + half)
-
-def wald_ci(p_hat: float, n: int, z: float = 1.96):
-    if n <= 0: return 0.0, 1.0
-    p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
-    half = z * math.sqrt(p * (1.0 - p) / n)
-    return max(0.0, p - half), min(1.0, p + half)
+def _acc_from_fr(fr):
+    return (1.0 - np.asarray(fr, dtype=float)) * 100.0
 
 def _nonneg_yerr(center, low, high):
     center = np.asarray(center, dtype=float)
@@ -82,330 +82,343 @@ def _nonneg_yerr(center, low, high):
     neg[neg < 0] = 0; pos[pos < 0] = 0
     return np.vstack([neg, pos])
 
-# -------------------- Stile assi --------------------
-def _style_axes():
-    plt.xlabel("BER = K / M")
-    plt.ylabel("Accuracy (1 − FR) [%]")
-    plt.ylim(0, 100)
-    plt.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.6)
-    plt.gca().set_axisbelow(True)
-
-# -------------------- Helper grafici --------------------
-def _acc_from_fr(fr): 
-    return (1.0 - np.asarray(fr, dtype=float)) * 100.0
+def wilson_ci(p_hat: float, n: int, z: float = 1.96):
+    if n <= 0: return 0.0, 1.0
+    p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
+    denom  = 1.0 + (z*z)/n
+    center = (p + (z*z)/(2*n)) / denom
+    half   = (z * math.sqrt((p*(1.0 - p)/n) + (z*z)/(4*n*n))) / denom
+    return max(0.0, center - half), min(1.0, center + half)
 
 def _plot_series_with_bands(x, y_acc, low_acc, high_acc, color, marker, label, title, outpath):
     yerr = _nonneg_yerr(y_acc, low_acc, high_acc)
-    fig = plt.figure(figsize=(7, 5), dpi=140)
-    # passa il marker QUI (LINE_BASE non lo ha)
+    fig = plt.figure(figsize=(7.2, 5.2), dpi=140)
     plt.plot(x, y_acc, marker=marker, label=label, **LINE_BASE)
     plt.errorbar(x, y_acc, yerr=yerr, fmt="none",
                  ecolor=color, elinewidth=2.0, capsize=5, capthick=2.0, alpha=0.95, zorder=2)
-    _style_axes(); plt.title(title); plt.legend()
-    os.makedirs(os.path.dirname(outpath), exist_ok=True)
+    _style_axes_logx()
+    plt.title(title)
+    plt.legend()
+    os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)
     fig.tight_layout(); fig.savefig(outpath); plt.close(fig)
     return outpath
 
-# ============================ Plot: dalla tabella ============================
+# ============================ Helpers: column normalization ============================
 
-def plot_from_table(df_tab: pd.DataFrame, M: int, outdir: str, z: float, n19000: int, title_prefix: str):
-    saved = []
+def _normalize_n1_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize columns to exactly: K, run, fr_n1."""
+    mapping = {}
+    lowmap = {c.lower(): c for c in df.columns}
+    if "k" in lowmap: mapping[lowmap["k"]] = "K"
+    if "run" in lowmap: mapping[lowmap["run"]] = "run"
+    elif "rep" in lowmap: mapping[lowmap["rep"]] = "run"
+    if "fr_n1" in lowmap: mapping[lowmap["fr_n1"]] = "fr_n1"
+    elif "fr" in lowmap: mapping[lowmap["fr"]] = "fr_n1"
+    elif "failure rate" in lowmap: mapping[lowmap["failure rate"]] = "fr_n1"
+    return df.rename(columns=mapping)
 
-    # Ordina e calcola BER
-    df = df_tab.copy()
-    for c in ["K","n_wilson","FR_wilson","FR_wilson_low","FR_wilson_high",
-              "n_ep","FR_ep","wald_low","wald_high",
-              "N_FPC","FR_onestep","EPS_onestep",
-              "n_ep_wilson","FR_ep_wilson","WILSON_low","WILSON_high"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.sort_values("K").reset_index(drop=True)
-    x = (df["K"].astype(float) / float(M)).values
+# ============================ Table → Summary Wilson ============================
 
-    # ===== Grafico 2: Wilson (n = n_wilson) =====
-    y_acc  = _acc_from_fr(df["FR_wilson"].values)
-    low_a  = _acc_from_fr(df["FR_wilson_high"].values)  # high FR -> low Acc
-    high_a = _acc_from_fr(df["FR_wilson_low"].values)
-    p2 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_Wilson_nTable.png")
-    saved.append(_plot_series_with_bands(
-        x, y_acc, low_a, high_a, COL_WIL_TABLE, "o",
-        label="Wilson (n = n_wilson)", 
-        title=f"{title_prefix} — Accuracy vs BER (Wilson 95% CI, n = n_injections)",
-        outpath=p2
-    ))
+def plot_summary_wilson(table_csv: str, M: int, outdir: str, title: str):
+    df = pd.read_csv(table_csv)
+    for c in ["K", "FR_wilson", "FR_wilson_low", "FR_wilson_high"]:
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.sort_values("K").dropna(subset=["K", "FR_wilson"]).reset_index(drop=True)
 
-    # ===== Grafico 3: EP (punti = FR_ep; barre = Wald da tabella) =====
-    if {"FR_ep","wald_low","wald_high"}.issubset(df.columns):
-        y_acc  = _acc_from_fr(df["FR_ep"].values)
-        low_a  = _acc_from_fr(df["wald_high"].values)
-        high_a = _acc_from_fr(df["wald_low"].values)
-        p3 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_EP_Wald.png")
-        saved.append(_plot_series_with_bands(
-            x, y_acc, low_a, high_a, COL_EP_WALD, "s",
-            label="EP (Wald 95% CI)",
-            title=f"{title_prefix} — Accuracy vs BER (EP, Wald 95% CI)",
-            outpath=p3
-        ))
+    x      = (df["K"].astype(float) / float(M)).values
+    acc    = _acc_from_fr(df["FR_wilson"].values)
+    acc_lo = _acc_from_fr(df["FR_wilson_high"].values)  # FR high -> Acc low
+    acc_hi = _acc_from_fr(df["FR_wilson_low"].values)
 
-    # (Opzionale) EP-Wilson se presente in tabella
-    if {"FR_ep_wilson","WILSON_low","WILSON_high"}.issubset(df.columns):
-        y_acc  = _acc_from_fr(df["FR_ep_wilson"].values)
-        low_a  = _acc_from_fr(df["WILSON_high"].values)
-        high_a = _acc_from_fr(df["WILSON_low"].values)
-        p3b = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_EP_Wilson.png")
-        saved.append(_plot_series_with_bands(
-            x, y_acc, low_a, high_a, COL_EP_WILSON, "D",
-            label="EP (Wilson 95% CI)",
-            title=f"{title_prefix} — Accuracy vs BER (EP, Wilson 95% CI)",
-            outpath=p3b
-        ))
+    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wilson_Summary.png")
+    return _plot_series_with_bands(
+        x, acc, acc_lo, acc_hi, COL_WIL_SUM, "o",
+        label="Wilson (summary table)", 
+        title=f"{title} — Accuracy vs BER (Wilson 95% CI, summary)",
+        outpath=out
+    )
 
-    # ===== Grafico 4: Wald n = n19000 costante (sui FR_wilson) =====
-    acc  = _acc_from_fr(df["FR_wilson"].values)
-    low  = []; high = []
-    for p in df["FR_wilson"].values:
-        lo, hi = wald_ci(float(p), n=n19000, z=z)
-        low.append((1.0 - hi) * 100.0)
-        high.append((1.0 - lo) * 100.0)
-    p4 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_Wald_n{n19000}.png")
-    saved.append(_plot_series_with_bands(
-        x, acc, np.array(low), np.array(high), COL_WALD_19000, "d",
-        label=f"Wald (n = {n19000})",
-        title=f"{title_prefix} — Accuracy vs BER (Wald 95% CI, n = {n19000})",
-        outpath=p4
-    ))
+# ============================ FI Context (single build, reused) ============================
 
-    # ===== Grafico 5: One-Step FPC (punti FR_onestep; barre ±EPS) =====
-    if {"FR_onestep","EPS_onestep"}.issubset(df.columns):
-        fr  = df["FR_onestep"].values.astype(float)
-        eps = df["EPS_onestep"].values.astype(float)
-        acc = (1.0 - fr) * 100.0
-        low = (1.0 - np.clip(fr + eps, 0.0, 1.0)) * 100.0
-        high= (1.0 - np.clip(fr - eps, 0.0, 1.0)) * 100.0
-        p5 = os.path.join(outdir, f"{title_prefix}_accuracy_vs_BER_OneStepFPC.png")
-        saved.append(_plot_series_with_bands(
-            x, acc, low, high, COL_WALD_FPC, "^",
-            label="One-Step (FPC, ε tabella)",
-            title=f"{title_prefix} — Accuracy vs BER (One-Step FPC, 95%)",
-            outpath=p5
-        ))
+@dataclass
+class FIContext:
+    model: "torch.nn.Module"
+    device: "torch.device"
+    test_loader: "torch.utils.data.DataLoader"
+    clean_by_batch: List["torch.Tensor"]
+    total_samples: int
+    all_faults: List[Tuple[str, Tuple[int, ...], int]]
+    M: int
 
-    return saved
-
-# ============================ n=1: generazione opzionale ============================
-
-def autogen_n1_points(Ks, reps=3, seed=0, out_csv=None):
-    """
-    Genera punti n=1 (una iniezione con K fault elementari scelti a caso) usando il tuo stack.
-    Ritorna un DataFrame (K, rep, fr_n1). Se out_csv è dato, salva anche il CSV.
-    Richiede i moduli: faultManager.*, utils.*, SETTINGS.
-    """
-    import random
-    from itertools import product
+def _get_quant_weight(module):
     import torch
-    from tqdm import tqdm
+    if hasattr(module, "weight"):
+        try:
+            return module.weight()
+        except Exception:
+            pass
+    if hasattr(module, "_packed_params") and hasattr(module._packed_params, "_weight_bias"):
+        w, _ = module._packed_params._weight_bias()
+        return w
+    raise RuntimeError("Cannot access quantized weights.")
 
-    from faultManager.WeightFault import WeightFault
-    from faultManager.WeightFaultInjector import WeightFaultInjector
+def _build_all_faults(model):
+    from itertools import product
+    import torch.nn as nn
+    faults = []
+    for name, module in model.named_modules():
+        if isinstance(module, (nn.quantized.Linear, nn.quantized.Conv2d)):
+            try:
+                w = _get_quant_weight(module)
+            except Exception:
+                continue
+            for idx in product(*[range(s) for s in w.shape]):
+                for bit in range(8):
+                    faults.append((name, idx, bit))
+    return faults
+
+def build_fi_context() -> FIContext:
+    import torch
     from utils import get_loader, load_from_dict, get_network, load_quantized_model, save_quantized_model
     import SETTINGS
 
-    def _get_quant_weight(module: torch.nn.Module) -> torch.Tensor:
-        if hasattr(module, "weight"):
-            try: return module.weight()
-            except Exception: pass
-        if hasattr(module, "_packed_params") and hasattr(module._packed_params, "_weight_bias"):
-            w, _ = module._packed_params._weight_bias()
-            return w
-        raise RuntimeError("Impossibile ottenere il peso quantizzato dal modulo.")
+    torch.backends.quantized.engine = "fbgemm"
+    device = torch.device("cpu")
+    ds = getattr(SETTINGS, "DATASET_NAME", getattr(SETTINGS, "DATASET", ""))
+    net = getattr(SETTINGS, "NETWORK_NAME", getattr(SETTINGS, "NETWORK", ""))
 
-    def _build_all_faults(model):
-        faults = []
-        for name, module in model.named_modules():
-            if isinstance(module, (torch.nn.quantized.Linear, torch.nn.quantized.Conv2d)):
-                try: w = _get_quant_weight(module)
-                except Exception: continue
-                for idx in product(*[range(s) for s in w.shape]):
-                    for bit in range(8):
-                        faults.append((name, idx, bit))
-        return faults
+    print(f"Loading {ds} dataset...")
+    train_loader, _, test_loader = get_loader(
+        dataset_name=ds,
+        batch_size=getattr(SETTINGS, "BATCH_SIZE", 64),
+        network_name=net
+    )
 
-    def _build_and_quantize_once():
-        torch.backends.quantized.engine = "fbgemm"
-        device = torch.device("cpu")
-        ds = getattr(SETTINGS, "DATASET_NAME", getattr(SETTINGS, "DATASET", ""))
-        net = getattr(SETTINGS, "NETWORK_NAME", getattr(SETTINGS, "NETWORK", ""))
+    qmodel, qpath = load_quantized_model(ds, net, device="cpu", engine="fbgemm")
+    if qmodel is not None:
+        model = qmodel
+        print(f"[PTQ] loaded quantized: {qpath}")
+    else:
+        model = get_network(net, device, ds).to(device).eval()
+        ckpt = f"./trained_models/{ds}_{net}_trained.pth"
+        if os.path.exists(ckpt):
+            load_from_dict(model, device, ckpt)
+            print("[CKPT] float checkpoint loaded")
+        if hasattr(model, "quantize_model"):
+            model.quantize_model(calib_loader=train_loader)
+            model.eval()
+            save_quantized_model(model, ds, net, engine="fbgemm")
+            print("[PTQ] quantized & saved")
 
-        train_loader, _, test_loader = get_loader(
-            dataset_name=ds,
-            batch_size=getattr(SETTINGS, "BATCH_SIZE", 64),
-            network_name=net
-        )
-        qmodel, qpath = load_quantized_model(ds, net, device="cpu", engine="fbgemm")
-        if qmodel is not None:
-            model = qmodel
-            print(f"[PTQ] caricato quantizzato: {qpath}")
-        else:
-            model = get_network(net, device, ds).to(device).eval()
-            ckpt = f"./trained_models/{ds}_{net}_trained.pth"
-            if os.path.exists(ckpt):
-                load_from_dict(model, device, ckpt)
-                print("[CKPT] checkpoint float caricato")
-            if hasattr(model, "quantize_model"):
-                model.quantize_model(calib_loader=train_loader)
-                model.eval()
-                save_quantized_model(model, ds, net, engine="fbgemm")
-                print("[PTQ] quantizzato e salvato")
-        clean_by_batch = []
-        with torch.inference_mode():
-            for xb, _ in test_loader:
-                logits = model(xb.to(device))
-                clean_by_batch.append(torch.argmax(logits, dim=1).cpu())
-        total_samples = sum(len(t) for t in clean_by_batch)
-        if total_samples == 0:
-            raise RuntimeError("Test loader vuoto.")
-        return model, device, test_loader, clean_by_batch, total_samples
+    clean_by_batch = []
+    with torch.inference_mode():
+        for xb, _ in test_loader:
+            logits = model(xb.to(device))
+            clean_by_batch.append(torch.argmax(logits, dim=1).cpu())
+    total_samples = sum(len(t) for t in clean_by_batch)
+    if total_samples == 0:
+        raise RuntimeError("Empty test loader.")
 
-    def _eval_frcrit_for_combo(model, device, test_loader, clean_by_batch, combo, inj_id, total_samples):
-        injector = WeightFaultInjector(model)
-        faults = [WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bits=[bt])
-                  for (ln, ti, bt) in combo]
-        mismatches = 0
-        try:
-            injector.inject_faults(faults, 'bit-flip')
-            with torch.inference_mode():
-                for batch_i, (xb, _) in enumerate(test_loader):
-                    pred_f = torch.argmax(model(xb.to(device)), dim=1).cpu().numpy()
-                    clean_pred = clean_by_batch[batch_i].numpy()
-                    mismatches += int((pred_f != clean_pred).sum())
-        finally:
-            injector.restore_golden()
-        return mismatches / float(total_samples)
-
-    # ---- esecuzione ----
-    Ks = list(sorted(set(int(k) for k in Ks)))
-    model, device, test_loader, clean_by_batch, total_samples = _build_and_quantize_once()
     all_faults = _build_all_faults(model)
     M = len(all_faults)
-    print(f"[n=1] Elementary faults M = {M}")
+    print(f"[FI] Elementary faults M = {M}")
+    return FIContext(model, device, test_loader, clean_by_batch, total_samples, all_faults, M)
 
+# ============================ n=N: CSV or autogen (reusing context) ============================
+
+def autogen_n_points(Ks: Sequence[int], N: int, seed: int, out_csv: Optional[str], ctx: Optional[FIContext] = None) -> pd.DataFrame:
+    """
+    For each K, sample N random K-combinations, evaluate FR for each injection,
+    compute p_hat = mean(FR_i). Save CSV with (K, p_hat, n=N).
+    If ctx is provided, reuse the prebuilt model/loader/fault-list.
+    """
+    import random
+    import torch
+    from faultManager.WeightFault import WeightFault
+    from faultManager.WeightFaultInjector import WeightFaultInjector
+
+    if ctx is None:
+        ctx = build_fi_context()
+
+    Ks = list(sorted(set(int(k) for k in Ks)))
     rows = []
     inj_id = 0
-    for rep in range(1, reps + 1):
-        rnd = random.Random(seed + 10007 * rep)
-        for K in Ks:
-            if K > M:
-                print(f"[WARN] K={K} > M={M}: salto.")
-                continue
-            idxs = rnd.sample(range(M), K)
-            combo = [all_faults[i] for i in idxs]
-            inj_id += 1
-            fr = _eval_frcrit_for_combo(model, device, test_loader, clean_by_batch,
-                                        combo, inj_id, total_samples)
-            rows.append((K, rep, float(fr)))
-            print(f"[n=1] rep={rep:2d} K={K:4d} → FR={fr:.6f}")
+    rnd = random.Random(seed)
 
-    df = pd.DataFrame(rows, columns=["K","rep","fr_n1"]).sort_values(["rep","K"]).reset_index(drop=True)
+    for K in Ks:
+        if K > ctx.M:
+            print(f"[WARN] K={K} > M={ctx.M}: skipping.")
+            continue
+        vals = []
+        for _ in range(N):
+            idxs = rnd.sample(range(ctx.M), K)
+            combo = [ctx.all_faults[i] for i in idxs]
+            injector = WeightFaultInjector(ctx.model)
+            faults = [WeightFault(injection=inj_id + 1, layer_name=ln, tensor_index=ti, bits=[bt])
+                      for (ln, ti, bt) in combo]
+            mismatches = 0
+            try:
+                injector.inject_faults(faults, 'bit-flip')
+                with torch.inference_mode():
+                    for batch_i, (xb, _) in enumerate(ctx.test_loader):
+                        pred_f = torch.argmax(ctx.model(xb.to(ctx.device)), dim=1).cpu().numpy()
+                        clean_pred = ctx.clean_by_batch[batch_i].numpy()
+                        mismatches += int((pred_f != clean_pred).sum())
+            finally:
+                injector.restore_golden()
+            inj_id += 1
+            vals.append(float(mismatches / float(ctx.total_samples)))
+        p_hat = float(np.mean(vals)) if len(vals) else float("nan")
+        rows.append((K, p_hat, int(N)))
+
+    df = pd.DataFrame(rows, columns=["K","p_hat","n"]).sort_values("K").reset_index(drop=True)
     if out_csv:
         os.makedirs(os.path.dirname(os.path.abspath(out_csv)) or ".", exist_ok=True)
         df.to_csv(out_csv, index=False)
-        print(f"[n=1] salvato: {out_csv}")
+        print(f"[n={N}] saved: {out_csv}")
     return df
 
-# ============================ Plot: n=1 random (3 repliche) ============================
-
-def plot_n1_random(df_n1: pd.DataFrame, M: int, outdir: str, z: float, title_prefix: str, ci_kind: str):
-    saved = []
-    df = df_n1.copy()
-    for c in ["K","rep","fr_n1"]:
+def plot_nN_wilson(nN_csv: str, M: int, outdir: str, title: str, z: float):
+    df = pd.read_csv(nN_csv)
+    for c in ["K","p_hat","n"]:
         if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
-    reps = sorted(df["rep"].dropna().unique().tolist())
+    df = df.dropna(subset=["K","p_hat","n"]).sort_values("K").reset_index(drop=True)
 
-    for rep in reps:
-        sub = df[df["rep"] == rep].sort_values("K")
-        x = (sub["K"].astype(float) / float(M)).values
-        p = sub["fr_n1"].astype(float).values
+    x   = (df["K"].astype(float) / float(M)).values
+    p   = df["p_hat"].astype(float).values
+    nn  = df["n"].astype(int).values
 
-        def _do(ci_label, color):
-            lo = []; hi = []
-            for pi in p:
-                if ci_label == "wilson": l, h = wilson_ci(pi, n=1, z=z)
-                else:                     l, h = wald_ci  (pi, n=1, z=z)
-                lo.append(l); hi.append(h)
-            acc_pts  = (1.0 - p)  * 100.0
-            acc_low  = (1.0 - np.array(hi)) * 100.0
-            acc_high = (1.0 - np.array(lo)) * 100.0
-            yerr = _nonneg_yerr(acc_pts, acc_low, acc_high)
+    lo = []; hi = []
+    for pi, n_i in zip(p, nn):
+        l, h = wilson_ci(pi, n=int(n_i), z=z)
+        lo.append(l); hi.append(h)
 
-            fig = plt.figure(figsize=(7, 5), dpi=140)
-            # linea nera che passa ESATTAMENTE per i punti della replica
-            plt.plot(x, acc_pts, marker="o", label=f"rep {rep} (n=1)", **LINE_BASE)
-            plt.errorbar(x, acc_pts, yerr=yerr, fmt="none",
-                         ecolor=color, elinewidth=2.0, capsize=5, capthick=2.0, alpha=0.95, zorder=2)
-            _style_axes()
-            name = "Wilson" if ci_label=="wilson" else "Wald"
-            plt.title(f"{title_prefix} — Accuracy vs BER ({name} 95% CI, n=1, replica {int(rep)})")
-            plt.legend()
-            fn = f"{title_prefix}_accuracy_vs_BER_{name}_n1_rep{int(rep)}.png"
-            path = os.path.join(outdir, fn)
-            fig.tight_layout(); fig.savefig(path); plt.close(fig)
-            return path
+    acc    = (1.0 - p)            * 100.0
+    acc_lo = (1.0 - np.array(hi)) * 100.0
+    acc_hi = (1.0 - np.array(lo)) * 100.0
 
-        if ci_kind in ("wilson","both"):
-            saved.append(_do("wilson", COL_N1_WIL))
-        if ci_kind in ("wald","both"):
-            saved.append(_do("wald",   COL_N1_WALD))
-    return saved
+    Nuniq = sorted(set(nn.tolist()))
+    tag = f"n{Nuniq[0]}" if len(Nuniq)==1 else f"n{min(Nuniq)}-{max(Nuniq)}"
+    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wilson_{tag}.png")
+    return _plot_series_with_bands(
+        x, acc, acc_lo, acc_hi, COL_WIL_NN, "o",
+        label=f"Wilson ({tag})",
+        title=f"{title} — Accuracy vs BER (Wilson 95% CI, {tag})",
+        outpath=out
+    )
 
+# ============================ n=1 plotting ============================
+
+def plot_n1_wilson(n1_csv: str, M: int, outdir: str, title: str, z: float, use_run: int):
+    df = pd.read_csv(n1_csv)
+    df = _normalize_n1_columns(df)
+    for c in ["K","run","fr_n1"]:
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+    sub = df[df["run"] == use_run].sort_values("K").dropna(subset=["K","fr_n1"])
+    if sub.empty:
+        raise ValueError(f"No rows for run={use_run} in {n1_csv}")
+
+    x   = (sub["K"].astype(float) / float(M)).values
+    p   = sub["fr_n1"].astype(float).values
+
+    lo, hi = [], []
+    for pi in p:
+        l, h = wilson_ci(pi, n=1, z=z)
+        lo.append(l); hi.append(h)
+
+    acc    = (1.0 - p)            * 100.0
+    acc_lo = (1.0 - np.array(hi)) * 100.0
+    acc_hi = (1.0 - np.array(lo)) * 100.0
+
+    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wilson_n1_run{int(use_run)}.png")
+    return _plot_series_with_bands(
+        x, acc, acc_lo, acc_hi, COL_WIL_N1, "o",
+        label=f"run {int(use_run)} (n = 1)",
+        title=f"{title} — Accuracy vs BER (Wilson 95% CI, n = 1, run {int(use_run)})",
+        outpath=out
+    )
 
 # ============================ Main ============================
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--table-csv", type=str, required=True,
-                    help="CSV della tabella summary (vedi header richiesti nel docstring)")
-    ap.add_argument("--n1-csv", type=str, default=None,
-                    help="CSV con punti n=1 random (K,rep,fr_n1). Ignorato se --autogen-n1.")
-    ap.add_argument("--autogen-n1", action="store_true",
-                    help="Se presente, genera i punti n=1 direttamente in questo script.")
-    ap.add_argument("--n1-K-list", type=str,
-                    default="1,2,3,4,5,6,7,8,9,10,50,100,150,384,575,768")
-    ap.add_argument("--n1-reps", type=int, default=3)
-    ap.add_argument("--n1-seed", type=int, default=0)
-    ap.add_argument("--n1-out", type=str, default="plots/acc_ber/n1_random_points.csv",
-                    help="Dove salvare (o leggere) i punti n=1")
+    # common
+    ap.add_argument("--table-csv", type=str, required=True)
     ap.add_argument("--outdir", type=str, default="plots/acc_ber")
-    ap.add_argument("--M", type=int, default=768)
+    ap.add_argument("--title", type=str, default="Model")
+    ap.add_argument("--M", type=int, required=True, help="Total elementary fault sites (M)")
     ap.add_argument("--z", type=float, default=1.96)
-    ap.add_argument("--n19000", type=int, default=19000)
-    ap.add_argument("--ci-n1", choices=["wilson","wald","both"], default="wilson",
-                    help="Tipo di CI per i grafici n=1")
-    ap.add_argument("--title", type=str, default="WineMLP")
-    args = ap.parse_args()
 
+    # n=1
+    ap.add_argument("--n1-csv", type=str, default=None)
+    ap.add_argument("--n1-use-run", type=int, default=1, help="Which run to plot for n=1")
+    ap.add_argument("--autogen-n1", action="store_true")
+    ap.add_argument("--n1-K-list", type=str, default="")
+    ap.add_argument("--n1-runs", type=int, default=1)
+    ap.add_argument("--n1-seed", type=int, default=0)
+    ap.add_argument("--n1-out", type=str, default="plots/acc_ber/n1_points.csv")
+
+    # n=N
+    ap.add_argument("--nN-csv", type=str, default=None)
+    ap.add_argument("--autogen-nN", action="store_true")
+    ap.add_argument("--nN", type=int, default=100)
+    ap.add_argument("--nN-K-list", type=str, default="")
+    ap.add_argument("--nN-seed", type=int, default=0)
+    ap.add_argument("--nN-out", type=str, default="plots/acc_ber/nN_points.csv")
+
+    args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
-    # ---- Carica tabella summary ----
-    df_tab = pd.read_csv(args.table_csv)
+    saved = []
 
-    # ---- Carica o genera n=1 ----
+    # 1) Summary (Wilson-only)
+    saved.append(plot_summary_wilson(args.table_csv, M=args.M, outdir=args.outdir, title=args.title))
+
+    # Build context ONCE if any autogen is required
+    ctx: Optional[FIContext] = None
+    need_ctx = args.autogen_n1 or args.autogen_nN
+    if need_ctx:
+        ctx = build_fi_context()
+
+    # 2) n = 1 (Wilson-only)
     if args.autogen_n1:
+        if not args.n1_K_list:
+            raise ValueError("--autogen-n1 requires --n1-K-list (comma-separated).")
         Ks = [int(x.strip()) for x in args.n1_K_list.split(",") if x.strip()]
-        df_n1 = autogen_n1_points(Ks, reps=args.n1_reps, seed=args.n1_seed, out_csv=args.n1_out)
+        # generate runs; save all in one CSV
+        all_rows = []
+        for run in range(1, args.n1_runs + 1):
+            df_run = autogen_n_points(Ks, N=1, seed=args.n1_seed + 10007*run, out_csv=None, ctx=ctx)
+            for _, r in df_run.iterrows():
+                all_rows.append((int(r["K"]), run, float(r["p_hat"])))
+        df_all = pd.DataFrame(all_rows, columns=["K","run","fr_n1"]).sort_values(["run","K"])
+        df_all.to_csv(args.n1_out, index=False)
+        print(f"[n=1] saved: {args.n1_out}")
+        n1_csv_path = args.n1_out
     else:
         if not args.n1_csv:
-            # fallback: prova a leggere da --n1-out se non dato --n1-csv
-            args.n1_csv = args.n1_out
-        df_n1  = pd.read_csv(args.n1_csv)
+            raise ValueError("Please provide --n1-csv or enable --autogen-n1.")
+        n1_csv_path = args.n1_csv
 
-    # ---- Plot ----
-    saved = []
-    saved += plot_from_table(df_tab, M=args.M, outdir=args.outdir, z=args.z,
-                             n19000=args.n19000, title_prefix=args.title)
-    saved += plot_n1_random(df_n1, M=args.M, outdir=args.outdir, z=args.z,
-                            title_prefix=args.title, ci_kind=args.ci_n1)
+    saved.append(plot_n1_wilson(n1_csv_path, M=args.M, outdir=args.outdir,
+                                title=args.title, z=args.z, use_run=args.n1_use_run))
 
-    print("[OK] Salvato:")
+    # 3) n = N (Wilson-only, e.g. 100)
+    if args.autogen_nN:
+        if not args.nN_K_list:
+            raise ValueError("--autogen-nN requires --nN-K-list (comma-separated).")
+        Ks = [int(x.strip()) for x in args.nN_K_list.split(",") if x.strip()]
+        autogen_n_points(Ks, N=args.nN, seed=args.nN_seed, out_csv=args.nN_out, ctx=ctx)
+        nN_csv_path = args.nN_out
+    else:
+        if not args.nN_csv:
+            raise ValueError("Please provide --nN-csv or enable --autogen-nN.")
+        nN_csv_path = args.nN_csv
+
+    saved.append(plot_nN_wilson(nN_csv_path, M=args.M, outdir=args.outdir,
+                                title=args.title, z=args.z))
+
+    print("[OK] Saved:")
     for p in saved:
         print(" -", p)
 

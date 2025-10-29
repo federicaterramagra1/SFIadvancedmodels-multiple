@@ -198,3 +198,5 @@ log/
 #.idea/
 
 *.txt
+data/
+*.tar.gz

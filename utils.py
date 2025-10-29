@@ -15,7 +15,8 @@ import SETTINGS
 
 # torchvision (per alcuni dataset CNN e utilità)
 from torchvision import transforms
-from torchvision.datasets import GTSRB, CIFAR10, CIFAR100, MNIST
+from torchvision.datasets import GTSRB, CIFAR10, CIFAR10, MNIST
+
 from torchvision.models import resnet
 from torchvision.models.densenet import _DenseBlock, _Transition
 from torchvision.models.efficientnet import Conv2dNormActivation
@@ -582,6 +583,57 @@ def formatted_print(fault_list: list,
 
 
 # ============================== Dataset loaders (tabular) ==============================
+_CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
+_CIFAR10_STD  = (0.2470, 0.2435, 0.2616)
+
+def load_CIFAR10_datasets(*args, **kwargs):
+    """
+    Ritorna (train_loader, val_loader, test_loader).
+    Firma robusta: accetta sia posizionali che keyword, così non rompe get_loader.
+    """
+    # estrazione parametri robusta
+    batch_size   = kwargs.get("batch_size",   args[0] if len(args) > 0 else 64)
+    num_workers  = kwargs.get("num_workers",  args[1] if len(args) > 1 else 2)
+    root         = kwargs.get("root",         "./data")
+    download     = kwargs.get("download",     True)
+    augment      = kwargs.get("augment",      kwargs.get("use_augment", False))
+    pin_memory   = kwargs.get("pin_memory",   True)
+    persist_flag = kwargs.get("persistent_workers", True)
+    persist_flag = (num_workers > 0) and persist_flag
+
+    # trasformazioni
+    if augment:
+        train_tf = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
+        ])
+    else:
+        train_tf = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
+        ])
+
+    test_tf = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
+    ])
+
+    # dataset
+    train_ds = CIFAR10(root=root, train=True,  transform=train_tf, download=download)
+    test_ds  = CIFAR10(root=root, train=False, transform=test_tf,  download=download)
+
+    # data loader (test senza shuffle per allineare clean_by_batch)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin_memory,
+                              drop_last=True, persistent_workers=persist_flag)
+    test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin_memory,
+                              drop_last=False, persistent_workers=persist_flag)
+
+    val_loader = None  # la tua get_loader fa unpack a 3 valori
+    return train_loader, val_loader, test_loader
 
 def load_letter_dataset(batch_size=64):
     """
