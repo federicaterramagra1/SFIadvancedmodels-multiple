@@ -31,6 +31,9 @@ FAULT_MODEL          = 'bit-flip'  # 'stuck-at_params' | 'bit-flip'
 STUCK_VALUE          = 1
 THRESHOLD            = 0.0       # soglia per errori non rilevati (se usata a valle)
 
+# --- Statistical EP control for ResNet (choose: "wilson" or "wald") ---
+RESNET_EP_CONTROL = "wald"
+
 # ==============================
 # DISPOSITIVO DI CALCOLO
 # ==============================

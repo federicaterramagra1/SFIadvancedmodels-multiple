@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Accuracy vs BER — Wilson-only (log-scale X), with:
-  1) Summary graph from table (Wilson 95% CI)
-  2) n = 1 graph (Wilson 95% CI) using one chosen run
-  3) n = N graph (Wilson 95% CI), e.g. N = 100 (autogen or CSV)
+Accuracy vs BER — Wald CI (log-scale X), with:
+  1) Table-driven graph (prefers Wald columns if present; falls back to Wilson)
+  2) n = 1 graph (Wald 95% CI) for a chosen run
+  3) n = N graph (Wald 95% CI), e.g. N = 100 (autogen or CSV)
 
 Notes
 - BER = K / M
@@ -13,26 +13,28 @@ Notes
 - M = total number of elementary fault sites (all bits of quantized weight tensors considered).
 
 Inputs
-- Summary CSV (required): must contain at least the columns
-    K, FR_wilson, FR_wilson_low, FR_wilson_high
-  (other columns are ignored)
+- Summary CSV (required). It may contain either Wald or Wilson columns:
+    Preferred (Wald): FR_wald & FR_wald_low & FR_wald_high
+    or               FR_ep   & wald_low     & wald_high
+    Fallback (Wilson): FR_wilson & FR_wilson_low & FR_wilson_high
+    (Case-insensitive; also accepts WILSON_low/WILSON_high)
 
 - n=1 CSV (optional unless autogenerating): columns can be either
     (K, run, fr_n1)  or  (K, rep, fr_n1)
   If multiple runs are present, choose which one via --n1-use-run.
 
 - n=N CSV (optional unless autogenerating): columns
-    (K, p_hat, n)       # p_hat is the mean FR across n random injections for that K
+    (K, p_hat, n)  # p_hat is the mean FR across n random injections for that K
 
 Autogeneration
 - n=1 autogen: use --autogen-n1 to generate (K, run, fr_n1), with --n1-K-list and --n1-seed.
 - n=N autogen: use --autogen-nN and --nN to generate N injections per K, computing
-  p_hat = mean(FR_i) across N random injections for that K, then Wilson CI with n = N.
+  p_hat = mean(FR_i) across N random injections for that K, then Wald CI with n = N.
 
 Outputs (PNG)
-- {title}_accuracy_vs_BER_Wilson_Summary.png
-- {title}_accuracy_vs_BER_Wilson_n1_run{r}.png
-- {title}_accuracy_vs_BER_Wilson_n{N}.png
+- {title}_accuracy_vs_BER_{Wald|Wilson}_Table.png
+- {title}_accuracy_vs_BER_Wald_n1_run{r}.png
+- {title}_accuracy_vs_BER_Wald_n{N}.png
 """
 
 import os
@@ -55,18 +57,21 @@ LINE_BASE = dict(
     markeredgewidth=1.3, zorder=3
 )
 
-COL_WIL_SUM   = "#2ca02c"  # summary Wilson bands
-COL_WIL_N1    = "#1f77b4"  # n=1 Wilson bands
-COL_WIL_NN    = "#8c564b"  # n=N Wilson bands
+COL_TAB   = "#2ca02c"  # table-driven bands
+COL_N1    = "#1f77b4"  # n=1 bands
+COL_NN    = "#8c564b"  # n=N bands
 
-def _style_axes_logx(xlim=(1e-4, 1.0)):
+def _style_axes_logx(xlim=(1e-4, 1.0), ylim=(0, 102)):
     plt.xlabel("BER")
     plt.ylabel("Accuracy (1 − FR) [%]")
-    plt.ylim(0, 100)
+    if ylim is not None:
+        plt.ylim(*ylim)
+    else:
+        plt.ylim(0, 102)
     ax = plt.gca()
     ax.set_xscale("log")
     if xlim is not None:
-        ax.set_xlim(*xlim)  # ora arriva fino a 1.0 (10^0)
+        ax.set_xlim(*xlim)  # fino a 1.0 (10^0)
     plt.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.6)
     ax.set_axisbelow(True)
 
@@ -82,28 +87,50 @@ def _nonneg_yerr(center, low, high):
     neg[neg < 0] = 0; pos[pos < 0] = 0
     return np.vstack([neg, pos])
 
+# ============================ Confidence Intervals ============================
+
+def wald_ci(p_hat: float, n: int, z: float = 1.96):
+    if n <= 0:
+        return 0.0, 1.0
+    p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
+    half = z * math.sqrt(p * (1.0 - p) / float(n))
+    return max(0.0, p - half), min(1.0, p + half)
+
 def wilson_ci(p_hat: float, n: int, z: float = 1.96):
-    if n <= 0: return 0.0, 1.0
+    if n <= 0:
+        return 0.0, 1.0
     p = float(min(max(p_hat, 1e-12), 1.0 - 1e-12))
     denom  = 1.0 + (z*z)/n
     center = (p + (z*z)/(2*n)) / denom
     half   = (z * math.sqrt((p*(1.0 - p)/n) + (z*z)/(4*n*n))) / denom
     return max(0.0, center - half), min(1.0, center + half)
 
-def _plot_series_with_bands(x, y_acc, low_acc, high_acc, color, marker, label, title, outpath):
+# Usa sempre WALD per n=1 e n=N
+CI_FUNC = wald_ci
+
+def _plot_series_with_bands(
+    x, y_acc, low_acc, high_acc,
+    color, marker, label, title, outpath,
+    show_legend=True
+):
+    # Headroom dinamico per non tagliare la parte alta
+    y_top_needed = float(np.nanmax(high_acc)) if np.size(high_acc) else 100.0
+    y_top = max(101.0, min(102.0, y_top_needed + 0.5))
+
     yerr = _nonneg_yerr(y_acc, low_acc, high_acc)
     fig = plt.figure(figsize=(7.2, 5.2), dpi=140)
     plt.plot(x, y_acc, marker=marker, label=label, **LINE_BASE)
     plt.errorbar(x, y_acc, yerr=yerr, fmt="none",
                  ecolor=color, elinewidth=2.0, capsize=5, capthick=2.0, alpha=0.95, zorder=2)
-    _style_axes_logx()
+    _style_axes_logx(ylim=(0, y_top))
     plt.title(title)
-    plt.legend()
+    if show_legend and label:
+        plt.legend()
     os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)
     fig.tight_layout(); fig.savefig(outpath); plt.close(fig)
     return outpath
 
-# ============================ Helpers: column normalization ============================
+# ============================ Helpers ============================
 
 def _normalize_n1_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Standardize columns to exactly: K, run, fr_n1."""
@@ -117,25 +144,60 @@ def _normalize_n1_columns(df: pd.DataFrame) -> pd.DataFrame:
     elif "failure rate" in lowmap: mapping[lowmap["failure rate"]] = "fr_n1"
     return df.rename(columns=mapping)
 
-# ============================ Table → Summary Wilson ============================
+def _get_first_col(df: pd.DataFrame, *cands: str) -> Optional[str]:
+    """Return actual column name matching first candidate (case-insensitive)."""
+    lowmap = {c.lower(): c for c in df.columns}
+    for c in cands:
+        if c.lower() in lowmap:
+            return lowmap[c.lower()]
+    return None
 
-def plot_summary_wilson(table_csv: str, M: int, outdir: str, title: str):
+# ============================ 1) Table → Summary (prefer Wald) ============================
+
+def plot_summary_from_table(table_csv: str, M: int, outdir: str, title: str):
     df = pd.read_csv(table_csv)
-    for c in ["K", "FR_wilson", "FR_wilson_low", "FR_wilson_high"]:
-        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.sort_values("K").dropna(subset=["K", "FR_wilson"]).reset_index(drop=True)
+    # try not to coerce categorical/strings inadvertently; cast when needed
+    if _get_first_col(df, "K") is None:
+        raise ValueError("Summary CSV must contain column 'K'.")
+    df = df.sort_values(_get_first_col(df, "K")).reset_index(drop=True)
 
-    x      = (df["K"].astype(float) / float(M)).values
-    acc    = _acc_from_fr(df["FR_wilson"].values)
-    acc_lo = _acc_from_fr(df["FR_wilson_high"].values)  # FR high -> Acc low
-    acc_hi = _acc_from_fr(df["FR_wilson_low"].values)
+    # Prefer Wald
+    k_col      = _get_first_col(df, "K")
+    w_center_c = _get_first_col(df, "FR_wald", "FR_ep")
+    w_low_c    = _get_first_col(df, "FR_wald_low", "wald_low")
+    w_high_c   = _get_first_col(df, "FR_wald_high", "wald_high")
 
-    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wilson_Summary.png")
+    ci_tag = None
+    if w_center_c and w_low_c and w_high_c:
+        center = pd.to_numeric(df[w_center_c], errors="coerce").values
+        low    = pd.to_numeric(df[w_low_c],    errors="coerce").values
+        high   = pd.to_numeric(df[w_high_c],   errors="coerce").values
+        ci_tag = "Wald"
+    else:
+        # Fallback Wilson (accepts FR_wilson_low or WILSON_low)
+        wi_center_c = _get_first_col(df, "FR_wilson", "FR_ep_wilson")
+        wi_low_c    = _get_first_col(df, "FR_wilson_low", "WILSON_low")
+        wi_high_c   = _get_first_col(df, "FR_wilson_high", "WILSON_high")
+        if wi_center_c and wi_low_c and wi_high_c:
+            center = pd.to_numeric(df[wi_center_c], errors="coerce").values
+            low    = pd.to_numeric(df[wi_low_c],    errors="coerce").values
+            high   = pd.to_numeric(df[wi_high_c],   errors="coerce").values
+            ci_tag = "Wilson"
+        else:
+            raise ValueError("Summary CSV must contain Wald (preferred) or Wilson columns.")
+
+    x      = (pd.to_numeric(df[k_col], errors="coerce").astype(float) / float(M)).values
+    acc    = _acc_from_fr(center)
+    acc_lo = _acc_from_fr(high)  # FR high -> Acc low
+    acc_hi = _acc_from_fr(low)
+
+    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_{ci_tag}_Table.png")
     return _plot_series_with_bands(
-        x, acc, acc_lo, acc_hi, COL_WIL_SUM, "o",
-        label="Wilson (summary table)", 
-        title=f"{title} — Accuracy vs BER (Wilson 95% CI, summary)",
-        outpath=out
+        x, acc, acc_lo, acc_hi, COL_TAB, "o",
+        label="",  # niente legenda
+        title=f"{title} — Accuracy vs BER ({ci_tag} 95% CI)",
+        outpath=out,
+        show_legend=False
     )
 
 # ============================ FI Context (single build, reused) ============================
@@ -224,7 +286,7 @@ def build_fi_context() -> FIContext:
     print(f"[FI] Elementary faults M = {M}")
     return FIContext(model, device, test_loader, clean_by_batch, total_samples, all_faults, M)
 
-# ============================ n=N: CSV or autogen (reusing context) ============================
+# ============================ 2) n=N: CSV or autogen (reusing context) ============================
 
 def autogen_n_points(Ks: Sequence[int], N: int, seed: int, out_csv: Optional[str], ctx: Optional[FIContext] = None) -> pd.DataFrame:
     """
@@ -278,7 +340,7 @@ def autogen_n_points(Ks: Sequence[int], N: int, seed: int, out_csv: Optional[str
         print(f"[n={N}] saved: {out_csv}")
     return df
 
-def plot_nN_wilson(nN_csv: str, M: int, outdir: str, title: str, z: float):
+def plot_nN_ci(nN_csv: str, M: int, outdir: str, title: str, z: float):
     df = pd.read_csv(nN_csv)
     for c in ["K","p_hat","n"]:
         if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -290,7 +352,7 @@ def plot_nN_wilson(nN_csv: str, M: int, outdir: str, title: str, z: float):
 
     lo = []; hi = []
     for pi, n_i in zip(p, nn):
-        l, h = wilson_ci(pi, n=int(n_i), z=z)
+        l, h = CI_FUNC(pi, n=int(n_i), z=z)
         lo.append(l); hi.append(h)
 
     acc    = (1.0 - p)            * 100.0
@@ -298,18 +360,25 @@ def plot_nN_wilson(nN_csv: str, M: int, outdir: str, title: str, z: float):
     acc_hi = (1.0 - np.array(lo)) * 100.0
 
     Nuniq = sorted(set(nn.tolist()))
-    tag = f"n{Nuniq[0]}" if len(Nuniq)==1 else f"n{min(Nuniq)}-{max(Nuniq)}"
-    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wilson_{tag}.png")
+    if len(Nuniq) == 1:
+        n_tag = f"n = {Nuniq[0]}"
+        file_tag = f"n{Nuniq[0]}"
+    else:
+        n_tag = f"n = {min(Nuniq)}–{max(Nuniq)}"
+        file_tag = f"n{min(Nuniq)}-{max(Nuniq)}"
+
+    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wald_{file_tag}.png")
     return _plot_series_with_bands(
-        x, acc, acc_lo, acc_hi, COL_WIL_NN, "o",
-        label=f"Wilson ({tag})",
-        title=f"{title} — Accuracy vs BER (Wilson 95% CI, {tag})",
-        outpath=out
+        x, acc, acc_lo, acc_hi, COL_NN, "o",
+        label="",  # niente legenda
+        title=f"{title} — Accuracy vs BER (Wald 95% CI, {n_tag})",
+        outpath=out,
+        show_legend=False
     )
 
-# ============================ n=1 plotting ============================
+# ============================ 3) n=1 plotting ============================
 
-def plot_n1_wilson(n1_csv: str, M: int, outdir: str, title: str, z: float, use_run: int):
+def plot_n1_ci(n1_csv: str, M: int, outdir: str, title: str, z: float, use_run: int):
     df = pd.read_csv(n1_csv)
     df = _normalize_n1_columns(df)
     for c in ["K","run","fr_n1"]:
@@ -323,19 +392,20 @@ def plot_n1_wilson(n1_csv: str, M: int, outdir: str, title: str, z: float, use_r
 
     lo, hi = [], []
     for pi in p:
-        l, h = wilson_ci(pi, n=1, z=z)
+        l, h = CI_FUNC(pi, n=1, z=z)
         lo.append(l); hi.append(h)
 
     acc    = (1.0 - p)            * 100.0
     acc_lo = (1.0 - np.array(hi)) * 100.0
     acc_hi = (1.0 - np.array(lo)) * 100.0
 
-    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wilson_n1_run{int(use_run)}.png")
+    out = os.path.join(outdir, f"{title}_accuracy_vs_BER_Wald_n1_run{int(use_run)}.png")
     return _plot_series_with_bands(
-        x, acc, acc_lo, acc_hi, COL_WIL_N1, "o",
+        x, acc, acc_lo, acc_hi, COL_N1, "o",
         label=f"run {int(use_run)} (n = 1)",
-        title=f"{title} — Accuracy vs BER (Wilson 95% CI, n = 1, run {int(use_run)})",
-        outpath=out
+        title=f"{title} — Accuracy vs BER (Wald 95% CI, n = 1, run {int(use_run)})",
+        outpath=out,
+        show_legend=True  # legenda solo per n=1
     )
 
 # ============================ Main ============================
@@ -371,8 +441,8 @@ def main():
 
     saved = []
 
-    # 1) Summary (Wilson-only)
-    saved.append(plot_summary_wilson(args.table_csv, M=args.M, outdir=args.outdir, title=args.title))
+    # 1) Table (prefer Wald; else Wilson) — senza "summary" nel titolo, niente legenda
+    saved.append(plot_summary_from_table(args.table_csv, M=args.M, outdir=args.outdir, title=args.title))
 
     # Build context ONCE if any autogen is required
     ctx: Optional[FIContext] = None
@@ -380,7 +450,7 @@ def main():
     if need_ctx:
         ctx = build_fi_context()
 
-    # 2) n = 1 (Wilson-only)
+    # 2) n = 1 (Wald)
     if args.autogen_n1:
         if not args.n1_K_list:
             raise ValueError("--autogen-n1 requires --n1-K-list (comma-separated).")
@@ -400,10 +470,10 @@ def main():
             raise ValueError("Please provide --n1-csv or enable --autogen-n1.")
         n1_csv_path = args.n1_csv
 
-    saved.append(plot_n1_wilson(n1_csv_path, M=args.M, outdir=args.outdir,
-                                title=args.title, z=args.z, use_run=args.n1_use_run))
+    saved.append(plot_n1_ci(n1_csv_path, M=args.M, outdir=args.outdir,
+                            title=args.title, z=args.z, use_run=args.n1_use_run))
 
-    # 3) n = N (Wilson-only, e.g. 100)
+    # 3) n = N (Wald) — senza legenda
     if args.autogen_nN:
         if not args.nN_K_list:
             raise ValueError("--autogen-nN requires --nN-K-list (comma-separated).")
@@ -415,8 +485,8 @@ def main():
             raise ValueError("Please provide --nN-csv or enable --autogen-nN.")
         nN_csv_path = args.nN_csv
 
-    saved.append(plot_nN_wilson(nN_csv_path, M=args.M, outdir=args.outdir,
-                                title=args.title, z=args.z))
+    saved.append(plot_nN_ci(nN_csv_path, M=args.M, outdir=args.outdir,
+                            title=args.title, z=args.z))
 
     print("[OK] Saved:")
     for p in saved:

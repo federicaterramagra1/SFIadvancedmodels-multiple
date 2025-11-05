@@ -802,20 +802,25 @@ if __name__ == "__main__":
     net_lo = SETTINGS.NETWORK.lower()
 
     # Build + clean pass
-    if ds_up == "CIFAR10" and net_lo in ("resnet20", "resnet-20"):
+    is_resnet20_cifar10 = (ds_up == "CIFAR10" and net_lo in ("resnet20", "resnet-20"))
+    if is_resnet20_cifar10:
         print("[BOOT] Using pretrained ResNet20@CIFAR10 INT8 (fbgemm).")
         model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes = \
             build_resnet20_cifar10_pretrained_int8_and_clean()
-        ONLY_WILSON = True   # SOLO Wilson su ResNet20
+        # Scegli qui l'EP controller (Wald o Wilson) tramite SETTINGS.RESNET_EP_CONTROL
+        RESNET_EP = getattr(SETTINGS, "RESNET_EP_CONTROL", "wilson").lower()
+        if RESNET_EP not in ("wilson", "wald"):
+            print(f"[WARN] RESNET_EP_CONTROL='{RESNET_EP}' non valido. Uso 'wilson'.")
+            RESNET_EP = "wilson"
     else:
         model, device, test_loader, clean_by_batch, baseline_hist, baseline_dist, num_classes = \
             build_and_quantize_once()
-        ONLY_WILSON = False  # Wald disponibile sugli altri
 
-    K_LIST = getattr(SETTINGS, "K_LIST", [1, 2, 3])
+    K_LIST = getattr(SETTINGS, "K_LIST", [1,2,3,4,5,6,7,8,9,10,20,50,70,100,130,150,2167168])
 
     for N in K_LIST:
-        if ONLY_WILSON:
+        if is_resnet20_cifar10:
+            # Esegue UNA sola volta con il controller scelto
             avg, half_tuple, n_used, _, out_file = run_fault_injection(
                 model=model,
                 device=device,
@@ -829,12 +834,14 @@ if __name__ == "__main__":
                 save_dir="results_minimal",
                 seed=getattr(SETTINGS, "SEED", 0),
                 exhaustive_up_to_n=getattr(SETTINGS, "EXHAUSTIVE_UP_TO_N", -1),
-                ep_control="wilson",
-                prefix_tag="_EPwilson"
+                ep_control=RESNET_EP,
+                prefix_tag=("_EPwald" if RESNET_EP == "wald" else "_EPwilson")
             )
             half = _unpack_half(half_tuple)
-            print(f"[DONE/WILSON] N={N} | FR={avg:.6g} | half={half:.6g} | injections={n_used} | file={out_file}")
+            print(f"[DONE/{RESNET_EP.upper()}] N={N} | FR={avg:.6g} | half={half:.6g} | injections={n_used} | file={out_file}")
+
         else:
+            # Comportamento precedente: esegue sia Wald che Wilson
             # Wald
             avg_w, half_tuple_w, n_w, _, out_w = run_fault_injection(
                 model=model,
@@ -855,7 +862,7 @@ if __name__ == "__main__":
             half_w = _unpack_half(half_tuple_w)
             print(f"[DONE/WALD] N={N} | FR={avg_w:.6g} | half={half_w:.6g} | injections={n_w} | file={out_w}")
 
-            # Wilson (con FPC auto)
+            # Wilson
             avg_i, half_tuple_i, n_i, _, out_i = run_fault_injection(
                 model=model,
                 device=device,
